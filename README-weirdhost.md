@@ -1,4 +1,4 @@
-# auto_kataBump  登录续期
+# auto_weirdhost  kr的ck登录续期
 
 
 你需要做以下修改：
