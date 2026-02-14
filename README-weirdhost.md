@@ -6,12 +6,17 @@
 
 ## 1、设置环境变量，环境变量格式如下：
 
-- PRIVATE_REPO_TOKEN （用于读取私库的 token，可跟其他库共用）
-
-- WEIRDHOST_REMEMBER_WEB_COOKIE
-
 - WEIRDHOST_TG_BOT_TOKEN  (可选)
 - WEIRDHOST_TG_CHAT_ID     (可选)
+
+以下为必填
+- PRIVATE_REPO_TOKEN （用于读取私库的 token，可跟其他库共用）
+
+- WEIRDHOST_REMEMBER_WEB_COOKIE 具体值如下
+
+  <img width="1577" height="570" alt="CleanShot 2026-02-14 at 20 27 03" src="https://github.com/user-attachments/assets/3e395d6f-f9b1-41bb-9136-9cb7835110e5" />
+
+
 
 
 
