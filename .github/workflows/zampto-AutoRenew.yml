@@ -98,7 +98,7 @@ jobs:
       - name: 🚀 执行 ${{ env.SCRIPT_DESC }}
         env:
           ZAMPTO_BATCH_WITH_SERVERS: ${{ secrets.ZAMPTO_BATCH_WITH_SERVERS }}
-          HY2_PROXY_URL: ${{ secrets.HY2_PROXY_URL }}
+          HY2_PROXY_URLSSS: ${{ secrets.HY2_PROXY_URL }}
           SOCKS_PORT: ${{ secrets.SOCKS_PORT || '51080' }}
         run: xvfb-run -a python ${{ env.SCRIPT_NAME }}
         working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
