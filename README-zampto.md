@@ -22,9 +22,9 @@ a2@example.com,pass2,123456:AAxxxxxx,123456789
 
 每行一套数据：
 
-1、不发 TG：email,password,server_id
+1、不发 TG：email,password
 
-2、发 TG：email,password,server_id,tg_bot_token,tg_chat_id
+2、发 TG：email,password,tg_bot_token,tg_chat_id
 
 - ZAMPTO_HY2_PROXY_URL （可选，Hysteria2 代理 URL，可自行改成本仓库里其他项目共用的HY2_PROXY_URL，自己去下面的红框里面改这个红框变量的secrets.ZAMPTO_HY2_PROXY_URL 即可，我这里不跟其他一样的原因是，zamp会检测vpn代理，并不是所有的hy2他都会承认，有些hy2节点会被检测识别为代理，所以我为了不影响其他的，这里单独用了一个 ZAMPTO_HY2_PROXY_URL 环境变量。）
 
