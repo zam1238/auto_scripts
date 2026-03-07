@@ -5,9 +5,9 @@ on:
   # 手动触发
   workflow_dispatch:
   
-  # 定时触发 (每2天凌晨1点)
+  # 定时触发 (每2天凌晨2点)
   schedule:
-    - cron: 0 1 */2 * *
+    - cron: 5 2 */2 * *
 
 # 权限配置：允许提交和推送更改
 permissions:
@@ -25,10 +25,10 @@ jobs:
       # ✅              Secrets 配置开始                         
       # ✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅
       
-      HY2_PROXY_URL: ${{ secrets.JUST_HY2_PROXY_URL }}                # 代理 URL（可选，如果要改用不一样的代理,你就改这个secrets后面跟着的变量名字，❌冒号最前面那个变量名字千万不能改）
+      HY2_PROXY_URL: ${{ secrets.HY2_PROXY_URL }}                # Hysteria2 代理 URL（可选）
       PRIVATE_REPO_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}          # 私有仓库访问令牌（必须）
-      JUST_BATCH: ${{ secrets.JUST_BATCH }}                          # 账户信息（必须）格式: email,passwd,tg_token,tg_chat_id（每行一个账号,回车换行后可填第二个账号）
-      SOCKS_PORT: ${{ secrets.SOCKS_PORT || '51080' }}              # SOCKS 端口（可选，默认 51080）
+      JUST_BATCH: ${{ secrets.JUST_BATCH }}                          # 账户信息（必须）格式: email,passwd,tg_token,tg_chat_id（每行一个账号）
+      SOCKS_PORT: ${{ secrets.SOCKS_PORT || '51080' }}              # SOCKS 端口（默认 51080）
       
       # ✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅
       # ✅              Secrets 配置结束                          
@@ -36,14 +36,14 @@ jobs:
       
       # ========== 项目配置 ==========
       # ✅ 可以修改：这些配置可根据需要调整
-      SCRIPT_DESC: JustRunMy 自动续期脚本               # 脚本描述
+      SCRIPT_DESC: JustRunMy 自动续期脚本（多账号版）    # 脚本描述
       SCREENSHOT_DIR: screenshots                     # 截图目录名
       MAX_DELAY_SECONDS: 120                          # 最大随机延迟秒数
       
       # ❗ 不建议修改：除非你知道自己在做什么
       PRIVATE_REPO: jyucoeng/auto-justrunmy-private   # 私有仓库地址
       PRIVATE_REPO_BRANCH: main                       # 私有仓库分支
-      SCRIPT_NAME: renew.py                           # 脚本文件名
+      SCRIPT_NAME: justrunmy_renew.py                 # 脚本文件名
 
       # ❌ 不可修改：这些配置与项目结构强相关
       PROJECT_DIR: justrunmy                          # 项目目录名
@@ -92,17 +92,14 @@ jobs:
       - name: 📦 安装系统依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb fonts-noto-cjk
+          sudo apt-get install -y xvfb xdotool scrot fonts-noto-cjk
 
       # 步骤 5: 安装 Python 依赖
       - name: 📚 安装 Python 依赖
         run: |
           pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install requests seleniumbase pyvirtualdisplay
-          fi
+          pip install -r requirements.txt
+        working-directory: ${{ env.REPO_OWNER }}-${{ env.REPO_NAME }}-${{ env.PROJECT_DIR }}
 
       # 步骤 6: 安装 Hysteria2（如果需要代理）
       # 说明：根据 HY2_PROXY_URL 是否配置来决定是否安装代理工具
@@ -139,7 +136,7 @@ jobs:
           HY2_PROXY_URL: ${{ env.HY2_PROXY_URL }}
           SOCKS_PORT: ${{ env.SOCKS_PORT }}
           SCREENSHOT_DIR: ${{ env.SCREENSHOT_DIR }}
-        run: xvfb-run -a python ${{ env.SCRIPT_NAME }}
+        run: python ${{ env.SCRIPT_NAME }}
         working-directory: ${{ env.REPO_OWNER }}-${{ env.REPO_NAME }}-${{ env.PROJECT_DIR }}
 
       # 步骤 9: 上传截图
