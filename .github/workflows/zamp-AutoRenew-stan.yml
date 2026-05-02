@@ -12,7 +12,7 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: zampto-renew
+  group: zampto-renew00
   cancel-in-progress: false  
 
 jobs:
