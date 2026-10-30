@@ -20,7 +20,7 @@ on:
   schedule:
     # 每 2 天 UTC 00:17。刻意错开 hus 的 00:07 —— 两个 workflow 都要往同一个公开
     # 仓库 push 时间文件，同一分钟启动会互相撞车；同时向 WARP 注册也容易被限流。
-    - cron: '17 0 */2 * *'
+    - cron: '17 0,12 * * *'
   workflow_dispatch:
 
 permissions:
