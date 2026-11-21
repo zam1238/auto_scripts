@@ -2,22 +2,21 @@
 # woiden.id 自动续期 —— ②号 (@kimisiwa)
 # -----------------------------------------------------------------------------
 # 本文件 = woiden 第 ② 个组（Github handle @kimisiwa 那一套）
-#   secret      WOIDEN_BATCH_2
-#   时间文件   woiden/2/time.txt (state.enc 也在 woiden/2/)
-#   group       Woiden_Renew_2
-#   cron        北京 07:30 / 12:30 / 16:00 (与 ① 号错开 20-30 分钟)
-# 第 ① 个账号 (@mimosiwa) 在 woiden-renew.yml，两文件互不影响、别合开。
-# ★ woiden.id 和 hax.co.id 是两个独立站点，账号、secret 都不通用。
-# hax 在 hus-renew.yml，本文件只跑 woiden.id。
-#
-# 需要配置的 Secrets (仓库 Settings → Secrets and variables → Actions)：
+#   secret     WOIDEN_BATCH_2
+#   时间文件   woiden/2/time.txt（state.enc 也在 woiden/2/）
+#   group      Woiden_Renew_2
+#   cron       北京 07:30 / 12:30 / 16:00（与 ① 号错开 20–30 分钟）
+# 第 ① 个账号（@mimosiwa）在 woiden-renew.yml，两文件互不影响，别合并。
+# ★ woiden.id 和 hax.co.id 是两个独立站点，账号 / secret 都不通用。
+#   hax 在 hus-renew.yml，本文件只跑 woiden.id。
+# 需要配置的 Secrets（仓库 Settings → Secrets and variables → Actions）：
 #   WOIDEN_BATCH_2      phone,tg_bot_token,tg_chat_id,tg_api_id,tg_api_hash,tg_session
-#   (本文件读 _2，对应 @kimisiwa；① 号 woiden-renew.yml 读 WOIDEN_BATCH)
-#   (多账号用分号或字面量 JSON 数组，见 woiden-renew.py)
-#   WOIDEN_TG_BOT       可选，站点 TG 验证时用户名，站内、站外 TG_bot
-#   (woiden.id 与 hax.co.id 共用同一个 bot)
+#                       （本文件读 _2，对应 @kimisiwa；① 号 woiden-renew.yml 读 WOIDEN_BATCH）
+#                       （多账号用分号或字面 \n 分隔；也支持 JSON 数组，见 woiden-renew.py）
+#   WOIDEN_TG_BOT       可选，站点 TG 验证码机器人用户名，缺省 @HaxTG_bot
+#                       （woiden.id 与 hax.co.id 共用同一个 bot）
 #   HY2_PROXY_URL       代理 URL。woiden.id 有 Cloudflare 挑战，强烈建议配置
-#   PRIVATE_REPO_TOKEN  有 auto_woiden_private 该仓库的 PAT
+#   PRIVATE_REPO_TOKEN  有 auto_woiden_private 读权限的 PAT
 #   SOCKS_PORT          可选，缺省 10808
 # =============================================================================
 
@@ -25,19 +24,19 @@ name: ♻️ Woiden Auto Renew ②-kimi
 
 on:
   schedule:
-    # 每次三班，北京时间 07:30 / 12:30 / 16:00 (UTC 23:30 / 4:30 / 8:0)。
-    # 本文件是 ② 号续期任务，值班时特意已有任务在开 20-30 分钟，避免冲突：
-    # 07:10 hus② / 07:50 woiden① / 09:30 hus① / 12:50 hus①
-    # 15:00 zamp-matins / 15:30 woiden① / 16:20 sb-checkin
-    # 单轮实测 1-12 分钟，60 分钟作为上限；被限流应由下一班 cron 接手。
-    # 需要由 state 保证：当日已成功后就跳过本次，不会重复续期。
-    - cron: '30 23 * * *'    # 第 1 次（北京 07:30）
-    - cron: '30 4 * * *'     # 第 2 次（北京 12:30）
-    - cron: '0 8 * * *'      # 第 3 次（北京 16:00）
+    # 每天三次，北京时间 07:30 / 12:30 / 16:00（UTC 30 23 / 30 4 / 0 8）。
+    # 本文件是 ② 号续期任务，槽位特意和已有任务错开 20–30 分钟，避免撞点：
+    #   07:10 hus② / 07:50 woiden① / 09:30 hus① / 12:10 woiden① / 12:50 hus①
+    #   15:00 zamp-matins / 15:30 woiden① / 16:20 sb-checkin
+    # 单轮实测 1–12 分钟，60 分钟只作兜底上限；被硬砍由下一班接手。
+    # 幂等由 state 保证：当日已成功则后续触发直接跳过，不会重复续期。
+    - cron: '30 23 * * *'  #第 1 次（北京 07:30）
+    - cron: '30 4 * * *'  #第 2 次（北京 12:30）
+    - cron: '0 8 * * *'  #第 3 次（北京 16:00）
   workflow_dispatch:
     inputs:
       force:
-        description: '忽略当日异常，强制再跑一班（验证/调试用）'
+        description: '忽略当日幂等，强制再跑一班（验证/调试用）'
         type: boolean
         default: false
 
@@ -48,34 +47,34 @@ permissions:
 jobs:
   renew:
     runs-on: ubuntu-latest
-    # 单次执行（workflow 内不再有重试），原因「执行期」步骤注释。实测单轮 1-12 分钟，
-    # 60 分钟作为上限；万一被限流，由下一班 cron 接手，state.enc 保证已成功的账号不重复续期。
+    # 单次执行（workflow 内不再循环重试，原因见「执行续期」步骤注释）。实测单轮 1–12 分钟，
+    # 60 分钟只作兜底上限：万一被硬砍，由下一班 cron 接手，state.enc 保证已成功的账号不重复续期。
     timeout-minutes: 60
     concurrency:
       group: Woiden_Renew_2
-      # 手动触发不应取消正在跑的任何任务——那会把正在续期的账号打断在半路。
+      # 手动触发不应该取消正在跑的定时任务——那会把正在续期的账号打断在半路。
       cancel-in-progress: false
     env:
-      # ---------- Secrets ----------
+      # ── Secrets ──────────────────────────────────────────────────────
       # 注意：这里不能用 BATCH / PROXY_URL —— 仓库里没有这两个 secret（只有
       # HUS_BATCH / SB_BATCH / V2EX_BATCH 和 HY2_PROXY_URL），取到空值会让预检直接退出。
       WOIDEN_BATCH: ${{ secrets.WOIDEN_BATCH_2 }}
       WOIDEN_TG_BOT: ${{ secrets.WOIDEN_TG_BOT }}
       PROXY_CONTENT: ${{ secrets.HY2_PROXY_URL }}
       SOCKS_PORT: ${{ secrets.SOCKS_PORT || '10808' }}
-      # ---------- 路径 ----------
+      # ── 路径 ────────────────────────────────────────────────────────
       PRIVATE_REPO: doraemon6789/auto_woiden_private
       PROJECT_DIR: woiden
       SCRIPT_NAME: woiden-renew.py
       SCREENSHOT_DIR: screenshots
-      # workflow_dispatch 勾选 force 时为 1：跳过「今日已成功」短路，强制再跑一班（验证用）
+      # 仅 workflow_dispatch 勾选 force 时为 1：绕过「今日已成功」短路，强制重跑一班（验证用）
       FORCE_RUN: ${{ inputs.force && '1' || '0' }}
-      # 时间文件放在自己的仓库目录的 woiden/2/time.txt。刻意 [不] 放在私有仓库的
-      # .git 目录下：私有仓库在公开库以 .git/config 的形式被拉取，
-      # 路径执行 git add 会触碰无操作（退出码 0 但什么都没保存），掉进 commit 报
-      # "nothing to commit" 让 step 红掉变名其实。
+      # 时间文件放在公开仓库根目录的 woiden/2/time.txt，刻意【不】放进私有仓库的
+      # 检出目录：那个目录里有自己的 .git，git 会把整棵子树当嵌套仓库，对未跟踪
+      # 路径执行 git add 会静默无操作（退出码 0 但什么都没暂存），接着 commit 报
+      # "nothing to commit" 让 step 红得莫名其妙。
       TIME_DIR: woiden/2
-      # ---------- 运行参数 ----------
+      # ── 运行参数 ────────────────────────────────────────────────────
       DEBUG_FLAG: "1"
       # 外层：整个续期流程（登录→进页面→解验证码→提交）失败后整体重跑次数
       # （实际执行 = 该值 + 1）
@@ -121,53 +120,64 @@ jobs:
           echo "[INFO] 脚本已就位：$DIR/${{ env.SCRIPT_NAME }}"
           ls -la "$DIR" | head -20
       - name: 校验 WOIDEN_BATCH
+        env:
+          WOIDEN_BATCH: ${{ secrets.WOIDEN_BATCH_2 }}
         run: |
           python3 - <<'PY'
-          import json, os, re, sys
-          raw = os.environ.get("WOIDEN_BATCH", "")
-          if not raw or not raw.strip():
-              print("::error::WOIDEN_BATCH 为空或全是空白：请在仓库 Secrets 里配置 WOIDEN_BATCH_2")
-              sys.exit(1)
-          raw = raw.strip()
-          # 兼容两种格式：单账号 JSON 对象 或 多账号 JSON 数组
-          # 例：{"phone":"...","bot_token":"...","chat_id":"...","api_id":...,"api_hash":"...","session":"..."}
-          try:
-              data = json.loads(raw)
-          except Exception as e:
-              print(f"::error::WOIDEN_BATCH 不是合法 JSON：{e}")
-              sys.exit(1)
-          if isinstance(data, dict):
-              accounts = [data]
-          elif isinstance(data, list):
+          import json, os
+          value = os.environ.get("WOIDEN_BATCH", "").strip()
+          if not value:
+              print("::error::WOIDEN_BATCH_2 为空，请在仓库 Secrets 里配置 WOIDEN_BATCH_2")
+              raise SystemExit(1)
+          phones = []
+          fmt = "JSON"
+          if value.startswith("["):
+              # JSON 数组格式：多账号推荐写法，字段名见私有库 README
+              try:
+                  data = json.loads(value)
+              except Exception as e:
+                  print(f"::error::WOIDEN_BATCH_2 不是合法 JSON：{e}")
+                  raise SystemExit(1)
+              if not isinstance(data, list) or not data:
+                  print("::error::WOIDEN_BATCH_2 JSON 数组为空或不是数组")
+                  raise SystemExit(1)
               accounts = data
+          elif value.startswith("{"):
+              # JSON 对象格式：单账号
+              try:
+                  data = json.loads(value)
+              except Exception as e:
+                  print(f"::error::WOIDEN_BATCH_2 不是合法 JSON：{e}")
+                  raise SystemExit(1)
+              accounts = [data]
           else:
-              print("::error::WOIDEN_BATCH 必须是 JSON 对象或数组")
-              sys.exit(1)
+              # 分号分隔格式：phone,bot_token,chat_id,api_id,api_hash,session;phone2,...
+              fmt = "分号"
+              accounts = []
+              for part in value.split(";"):
+                  part = part.strip()
+                  if not part:
+                      continue
+                  fields = [x.strip() for x in part.split(",")]
+                  if len(fields) != 6:
+                      print(f"::error::分号格式账号字段数不是 6：{part[:20]}***")
+                      raise SystemExit(1)
+                  accounts.append(dict(zip(["phone", "bot_token", "chat_id", "api_id", "api_hash", "session"], fields)))
           if len(accounts) != 1:
-              print(f"::error::② 号固定只跑 1 个账号，当前 WOIDEN_BATCH 里有 {len(accounts)} 个账号，请只保留 1 个")
-              sys.exit(1)
-          item = accounts[0]
-          if not isinstance(item, dict):
-              print("::error::账号必须是 JSON 对象，不要只写手机号字符串")
-              sys.exit(1)
-          phone = str(item.get("phone") or "").strip()
-          if not phone:
-              print("::error::账号缺少 phone")
-              sys.exit(1)
-          # 手机号格式：+ 开头或纯数字，长度 6-20
-          if not re.fullmatch(r"\+?\d{6,20}", phone):
-              print(f"::error::phone 格式不正确：{phone[:4]}***")
-              sys.exit(1)
-          # 其余字段：bot_token, chat_id, api_id, api_hash, session
-          # （若为空，脚本会在登录时按需处理）
-          missing = [k for k in ("tg_bot_token", "tg_chat_id", "tg_api_id", "tg_api_hash", "tg_session")
-                     if not str(item.get(k) or "").strip()]
-          if missing:
-              print(f"::warning::账号缺少以下字段（可能影响 TG 验证）：{', '.join(missing)}")
-          # 兼容旧字段名：bot_token → tg_bot_token
-          if not item.get("tg_bot_token") and item.get("bot_token"):
-              print("::warning::检测到旧字段 bot_token，建议改用 tg_bot_token")
-          print(f"账号校验通过：{phone[:3]}***（共 1 个账号）")
+              print(f"::error::② 号固定只跑 1 个账号，当前 WOIDEN_BATCH_2 里有 {len(accounts)} 个账号，请只保留 1 个")
+              raise SystemExit(1)
+          for index, item in enumerate(accounts, start=1):
+              if not isinstance(item, dict):
+                  print(f"::error::WOIDEN_BATCH_2 第 {index} 个账号不是 JSON 对象")
+                  raise SystemExit(1)
+              fields = [str(item.get(k) or "").strip() for k in ("phone", "bot_token", "chat_id", "api_id", "api_hash", "session")]
+              if any(not fields[i] for i in range(6)):
+                  raise SystemExit(f"WOIDEN_BATCH 第 {index} 个账号字段不足：需要 phone,bot_token,chat_id,api_id,api_hash,session")
+              phones.append(fields[0])
+          if len(set(phones)) != len(phones):
+              print("::error::WOIDEN_BATCH_2 里有重复手机号")
+              raise SystemExit(1)
+          print(f"账号校验通过：{phones[0][:3]}***（共 1 个账号，格式：{fmt}）")
           PY
 
       - name: 设置 Python
@@ -184,7 +194,23 @@ jobs:
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install requests playwright
+            pip install -q requests playwright
+          fi
+          # 检查缺失工具，按需安装，避免每次都重复安装
+          missing=""
+          for tool in ffmpeg convert; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              missing="$missing $tool"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "[INFO] 安装缺失工具:$missing"
+            sudo apt-get update -y
+            sudo apt-get install -y $missing
+          fi
+          # ffmpeg：若系统没有，尝试用 imageio-ffmpeg
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            pip install -q imageio imageio-ffmpeg
           fi
           # 浏览器：Playwright 需要 Chromium；若已安装则跳过
           if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
@@ -197,10 +223,9 @@ jobs:
               echo "[INFO] 浏览器 $b: $("$b" --version 2>&1 | head -1) → $(command -v "$b")"
             fi
           done
-          # 若私有库里有 playwright 浏览器安装脚本，优先用它
-          if [ -f install-playwright.sh ]; then
-            bash install-playwright.sh
-          fi
+          # 语音识别 / 验证码识别依赖：若私有库 requirements 里已有则跳过
+          python3 -c "import speech_recognition" 2>/dev/null || pip install -q SpeechRecognition
+          python3 -c "import ddddocr" 2>/dev/null || pip install -q ddddocr
       - name: 启用 WARP
         uses: fscarmen/warp-on-actions@v1.3
         with:
@@ -216,13 +241,12 @@ jobs:
           fi
           SB_VER="1.13.14"
           ARCHIVE="sing-box-${SB_VER}-linux-amd64.tar.gz"
-          URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/${ARCHIVE}"
           echo "[INFO] 下载 sing-box ${SB_VER} ..."
-          wget -q "$URL" -O "$ARCHIVE"
-          tar -xzf "$ARCHIVE"
-          mv "sing-box-${SB_VER}-linux-amd64/sing-box" ./sing-box
+          wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/${ARCHIVE}"
+          tar -xzf "$ARCHIVE" -C /tmp/
+          mv "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" ./sing-box
           chmod +x ./sing-box
-          rm -rf "$ARCHIVE" "sing-box-${SB_VER}-linux-amd64"
+          rm -rf "/tmp/sing-box-${SB_VER}-linux-amd64" "$ARCHIVE"
           echo "[INFO] sing-box $(./sing-box version | head -1)"
 
       - name: 随机延迟
@@ -234,20 +258,23 @@ jobs:
         id: renew
         working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
         run: |
-          # 单次执行（workflow 内不再有重试），原因：
-          # 1) 续期脚本内部已经有外层/中层/内层三层重试（见 env 里的 MAX_*），
+          # 单次执行（workflow 内不再循环重试），原因见下：
+          # 1) 2026-11-19 之前这里有过"每次都从头重建整个 chrome 配置目录"的逻辑，
+          #    2026-11-19 之后改成"只清理 chrome 配置目录中易过期的文件，并且每次都用
+          #    '干净浏览器'起 Chrome 并以无痕模式运行（无痕窗口不写持久化）"；
+          # 2) 脚本内部已经有外层/中层/内层三层重试（见 env 里的 MAX_*），
           #    workflow 再重试会把已经成功的账号重复续期；
-          # 2) 每次续期都会写 time.txt / state.enc，若 workflow 重试，
+          # 3) 每次续期都会写 time.txt / state.enc，若 workflow 重试，
           #    第二次跑会读到「今日已成功」而直接跳过，看起来像成功，实际是假成功。
           set +e
           python3 -u ${{ env.SCRIPT_NAME }} > woiden-renew.log 2>&1
           status=$?
           if [ "$status" -ne 0 ]; then
             echo "---- 日志全文（失败，完整输出）----"
-            cat woiden-renew.log
+            cat woiden-renew.log || true
           else
             echo "---- 日志尾部（最后 80 行）----"
-            tail -n 80 woiden-renew.log
+            tail -n 80 woiden-renew.log || true
           fi
           echo "---- 退出码: ${status} ----"
           exit "$status"
@@ -257,20 +284,21 @@ jobs:
         with:
           name: woiden-screenshots-${{ github.run_id }}
           path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/${{ env.SCREENSHOT_DIR }}
-          if-no-files-found: ignore
           retention-days: 7
+          if-no-files-found: warn
       - name: 上传日志
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: woiden-renew-log-${{ github.run_id }}
           path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/woiden-renew.log
-          if-no-files-found: ignore
           retention-days: 7
+          if-no-files-found: warn
 
       - name: 清理本地截图
         if: always()
         run: |
+          # 用 ${VAR:?} 兜住：变量为空时 rm -rf "/*" 会变成删根目录。
           DIR="${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}"
           SCREENSHOT_PATH="${DIR:?}/${{ env.SCREENSHOT_DIR }}"
           if [ -d "$SCREENSHOT_PATH" ]; then
@@ -283,43 +311,50 @@ jobs:
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 若本次是 cancelled（手动取消），不更新时间文件，避免把「取消」当成「成功」
           RENEW_OUTCOME="${{ steps.renew.outcome }}"
-          if [ "$RENEW_OUTCOME" = "cancelled" ]; then
-            echo "本次执行被取消，不更新时间文件"
-            exit 0
-          fi
-          STATE_KEEP="${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/state.enc"
-          if [ -f "$STATE_KEEP" ]; then
-            cp "$STATE_KEEP" /tmp/state.enc.keep
+          # state.enc 是续期脚本写出的「已成功账号」状态，提交它可以让下一班
+          # 跳过已成功的账号；若本次失败，state.enc 可能不存在或不完整，仍提交
+          # 已有的那份（若存在）。
+          STATE_KEEP="$RUNNER_TEMP/state.keep.enc"
+          STATE_ABS="${{ github.workspace }}/${{ env.TIME_DIR }}/state.enc"
+          if [ -f "$STATE_ABS" ]; then
+            cp "$STATE_ABS" "$STATE_KEEP"
           fi
           TIME_PATH="${{ env.TIME_DIR }}/time.txt"
           for attempt in 1 2 3; do
-            git fetch origin main
+            echo "提交执行时间，第 ${attempt}/3 次尝试"
+            git fetch origin refs/heads/main:refs/remotes/origin/main
             git reset --hard origin/main
             mkdir -p "${{ env.TIME_DIR }}"
-            if [ "$RENEW_OUTCOME" != "cancelled" ] && [ -f /tmp/state.enc.keep ]; then
-              cp /tmp/state.enc.keep "$STATE_KEEP"
+            # reset 会把工作区清掉，先把 state.enc 拷回来
+            if [ "$RENEW_OUTCOME" != "cancelled" ] && [ -f "$STATE_KEEP" ]; then
+              cp "$STATE_KEEP" "$STATE_ABS"
             fi
             date +'%Y-%m-%d %H:%M:%S' > "$TIME_PATH"
+            # time.txt 首次创建时还未被跟踪，ls-files 会报错，先提示
+            if ! git ls-files --error-unmatch "$TIME_PATH" >/dev/null 2>&1; then
+              echo "[INFO] $TIME_PATH 还没被跟踪，本次自动创建并纳入版本管理"
+            fi
             git add -f "$TIME_PATH"
             STATE_PATH="${{ env.TIME_DIR }}/state.enc"
-            if [ -f "$STATE_PATH" ]; then
+            if [ "$RENEW_OUTCOME" != "cancelled" ] && [ -f "$STATE_PATH" ]; then
               git add -f "$STATE_PATH"
             fi
             if git diff --cached --quiet; then
-              echo "时间文件无变化，无需提交"
+              echo "执行时间没有变化，跳过提交"
               exit 0
             fi
             git commit -m "⏱️ 更新 woiden/2 时间文件: $(date +'%Y-%m-%d %H:%M:%S')"
-            if git push origin HEAD:main; then
-              echo "时间文件已提交"
+            if git push origin HEAD:refs/heads/main; then
+              echo "执行时间已提交"
               exit 0
             fi
-            echo "推送发生并发冲突，等待 2 秒后重试..."
+            echo "推送发生并发冲突，重新获取远端后重试"
             git reset --hard origin/main
             sleep 2
           done
-          echo "::warning::3 次推送均失败，本次时间文件未提交"
+          echo "::warning::3 次推送均失败，本次时间文件未更新（不影响续期结果）"
           exit 0
       - name: 🧹 清理旧的工作流运行记录
         if: always()
@@ -329,16 +364,23 @@ jobs:
           set +e
           current_run="${{ github.run_id }}"
           cutoff_epoch=$(date -d '24 hours ago' +%s)
-          runs=$(gh run list --workflow "woiden-renew-2.yml" --repo "$GITHUB_REPOSITORY" --limit 200 --json databaseId,createdAt,status --jq '.[] | [.databaseId, .createdAt, .status] | @tsv')
+          runs=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow="woiden-renew-2.yml" \
+            --limit=100 \
+            --json databaseId,createdAt,status \
+            --jq '.[] | [.databaseId, .createdAt, .status] | @tsv' 2>/dev/null)
           if [ -z "$runs" ]; then
             echo "没有可清理的运行记录"
             exit 0
           fi
           to_delete=$(while IFS=$'\t' read -r run_id created_at status; do
+            [ -z "$run_id" ] && continue
             [ "$run_id" = "$current_run" ] && continue
             [ "$status" != "completed" ] && continue
-            created_epoch=$(date -d "$created_at" +%s)
-            [ "$created_epoch" -lt "$cutoff_epoch" ] && echo "$run_id"
+            created_epoch=$(date -d "$created_at" +%s 2>/dev/null || echo 0)
+            [ "$created_epoch" -ge "$cutoff_epoch" ] && continue
+            echo "$run_id"
           done <<< "$runs")
           if [ -z "$to_delete" ]; then
             echo "没有超过 24 小时的已完成运行记录需要清理"
