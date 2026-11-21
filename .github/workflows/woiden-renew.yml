@@ -1,5 +1,12 @@
 # =============================================================================
-# woiden.id 自动续期
+# woiden.id 自动续期 —— ① 号（@mimosiwa）
+# -----------------------------------------------------------------------------
+# 本文件 = woiden 第 ① 个账号（GitHub handle @mimosiwa 那一套）
+# secret     WOIDEN_BATCH
+# 时间文件   woiden/time.txt（state.enc 也在 woiden/）
+# group      Woiden_Renew
+# cron       北京 07:50 / 12:10 / 15:30
+# 第 ② 个账号（@kimisiwa）在 woiden-renew-2.yml，两文件互不影响，别合并。
 # -----------------------------------------------------------------------------
 # ★ woiden.id 和 hax.co.id 是两个独立站点，账号 / secret 都不通用。
 #   hax 在 hus-renew.yml，本文件只跑 woiden.id。
@@ -14,7 +21,7 @@
 #   SOCKS_PORT          可选，缺省 10808
 # =============================================================================
 
-name: ♻️ Woiden Auto Renew-mimo
+name: ♻️ Woiden Auto Renew ①-mimo
 
 on:
   schedule:
@@ -27,6 +34,11 @@ on:
     - cron: '10 4 * * *'  #第 2 次（北京 12:10）
     - cron: '30 7 * * *'  #第 3 次（北京 15:30）
   workflow_dispatch:
+    inputs:
+      force:
+        description: '忽略当日幂等，强制再跑一班（验证/调试用）'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -56,6 +68,8 @@ jobs:
       PROJECT_DIR: woiden
       SCRIPT_NAME: woiden-renew.py
       SCREENSHOT_DIR: screenshots
+    # 仅 workflow_dispatch 勾选 force 时为 1：绕过「今日已成功」短路，强制重跑一班（验证用）
+    FORCE_RUN: ${{ inputs.force && '1' || '0' }}
       # 时间文件放在公开仓库根目录的 woiden/time.txt，刻意【不】放进私有仓库的
       # 检出目录：那个目录里有自己的 .git，git 会把整棵子树当嵌套仓库，对未跟踪
       # 路径执行 git add 会静默无操作（退出码 0 但什么都没暂存），接着 commit 报
@@ -235,6 +249,7 @@ jobs:
           sleep $delay
 
       - name: 执行续期
+        id: renew
         working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
         run: |
           # 单次执行，刻意不做 workflow 内重试：
@@ -296,6 +311,8 @@ jobs:
           # 还原成远端旧版，所以先备份到 RUNNER_TEMP，每次 reset 后再恢复。
           STATE_KEEP="$RUNNER_TEMP/state.keep.enc"
           STATE_ABS="${{ github.workspace }}/${{ env.TIME_DIR }}/state.enc"
+          # 续期步骤的结论：cancelled 时不回填本次的 state.enc
+          RENEW_OUTCOME="${{ steps.renew.outcome }}"
           if [ -f "$STATE_ABS" ]; then cp "$STATE_ABS" "$STATE_KEEP"; fi
           TIME_PATH="${{ env.TIME_DIR }}/time.txt"
 
@@ -307,7 +324,12 @@ jobs:
             git reset --hard origin/main
             mkdir -p "${{ env.TIME_DIR }}"
             # reset --hard 会把已跟踪的 state.enc 还原成远端旧版，用备份恢复
-            if [ -f "$STATE_KEEP" ]; then cp "$STATE_KEEP" "$STATE_ABS"; fi
+            # 「执行续期」被取消（手动取消 / runner 回收 / 平台侧中断）时，
+            # 那一次运行没有产生任何成功记录，把它的 state.enc 落盘只会污染当日计数、
+            # 让下一班误报「本日第 N 次执行」。此时保留 origin/main 里的旧 state。
+            if [ "$RENEW_OUTCOME" != "cancelled" ] && [ -f "$STATE_KEEP" ]; then
+              cp "$STATE_KEEP" "$STATE_ABS"
+            fi
             date +'%Y-%m-%d %H:%M:%S' > "$TIME_PATH"
             # 这里曾经是「没被跟踪就 exit 1，要求先手动提交一次」——fork 或换了
             # 路径层级之后必然撞上，整条工作流变红却没真的坏。改成自动补：
@@ -318,7 +340,7 @@ jobs:
             git add -f "$TIME_PATH"
             # 当日状态密文（脚本生成）；没有就不加，不影响提交
             STATE_PATH="${{ env.TIME_DIR }}/state.enc"
-            if [ -f "$STATE_PATH" ]; then
+            if [ "$RENEW_OUTCOME" != "cancelled" ] && [ -f "$STATE_PATH" ]; then
               git add -f "$STATE_PATH"
             fi
             if git diff --cached --quiet; then
