@@ -1,417 +1,289 @@
-name: "Woiden 自动续期（第2批）"
+# =============================================================================
+# woiden.id 自动续期 —— ② 号（@kimisiwa）
+# -----------------------------------------------------------------------------
+# 每组一个 workflow，Secret 里只放该组账号：
+#   - WOIDEN_BATCH_2：此组账号的 JSON（格式见仓库 README / 脚本注释）
+#   - WOIDEN_GH_PAT：跨仓库取脚本 + 提交日志所需的 PAT（Contents: Read and write）
+#   - ② 号专用：WOIDEN_WARP / WOIDEN_PRIV_KEY / WOIDEN_PRIV_PUB（若脚本支持则注入）
+#   - ③ 号专用：WOIDEN_VPN_OVPN / WOIDEN_VPN_AUTH（若脚本支持则注入）
+# 脚本统一放在私有仓 doraemon6789/auto_woiden_private:scripts/woiden-renew.py。
+# 注意：脚本里默认不再清 chrome 里的网站数据、也不清本地持久化数据；
+#       每次以“干净浏览器”起 Chrome，并以无痕模式运行。
+#       固定跑 1 个账号（单次固定 1 个账号，没有账号切换），跑完就把截图和日
+#       志交回本仓；commit 的 message 里只写"续期结果：成功/失败"。
+# 2026-11-19 之前这里有过"跑完后把私有仓的旧截图/旧日志清掉再提交"的逻辑，
+# 2026-11-19 之后改成“只往本仓交本次截图和日志，不再去动私有仓”。
+# -----------------------------------------------------------------------------
+# 触发方式（北京时间 07:30、12:30、16:30 左右各跑一次）：
+#   - 07:30 → UTC 23:30（前一日）   → cron: '30 23 * * *'
+#   - 12:30 → UTC 04:30（当日）     → cron: '30 4 * * *'
+#   - 16:30 → UTC 08:30（当日）     → cron: '0 8 * * *'
+#   - 手动跑一次（强制本次必跑，跳过"当日已成功则跳过"）
+#     → Actions → 本 workflow → Run workflow → force: true
+# -----------------------------------------------------------------------------
+# ⚠️ 重要：本文件由 doraemon6789 仓库直接提供，不要手改。
+# 2026-11-19 之后上游脚本改动，涉及：
+# - WARP
+# - commit d06940e1 之前"每次都从头重建整个 chrome 配置目录"（会丢失本地持久化
+#   数据，如已登录的网站会话）改为只清理 chrome 配置目录中“易过期”的文件，
+#   并且每次都用"干净浏览器"起 Chrome 并以无痕模式运行（无痕窗口不写持久化）。
+# - 私有仓 doraemon6789/auto_woiden_private 里的脚本里默认会清掉登录成功的
+#   账号在续期完成以后留在"已续期的账号列表"里的账号，见脚本注释。
+# - 2026-11-19 之前这里有过"跑完后把私有仓的旧截图/旧日志清掉再提交"的逻辑，
+#   2026-11-19 之后改成"只往本仓交本次截图和日志，不再去动私有仓"。
+# =============================================================================
+
+name: ♻️ Woiden Auto Renew ②-kimi
 
 on:
   schedule:
-    # 北京时间 21:30 → UTC 13:30
-    - cron: "30 13 * * *"
+    # 北京时间 07:30 → UTC 23:30（前一日）
+    - cron: '30 23 * * *'
+    # 北京时间 12:30 → UTC 04:30（当日）
+    - cron: '30 4 * * *'
+    # 北京时间 16:30 → UTC 08:30（当日）
+    - cron: '0 8 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: '强制执行（跳过"当日已成功则跳过"）'
+        required: false
+        default: false
+        type: boolean
 
-# 并发控制：同一时间只跑一个，避免重复续期
+permissions:
+  contents: write
+  actions: write
+
 concurrency:
   group: woiden-renew-2
   cancel-in-progress: false
 
-permissions:
-  contents: read
+env:
+  TZ: Asia/Shanghai
+  PRIVATE_REPO: doraemon6789/auto_woiden_private
+  SCRIPT_NAME: woiden-renew.py
+  SCRIPT_DIR: scripts
+  WOIDEN_BATCH: ${{ secrets.WOIDEN_BATCH_2 }}
+  WOIDEN_WARP: ${{ secrets.WOIDEN_WARP }}
+  WOIDEN_PRIV_KEY: ${{ secrets.WOIDEN_PRIV_KEY }}
+  WOIDEN_PRIV_PUB: ${{ secrets.WOIDEN_PRIV_PUB }}
+  WOIDEN_VPN_OVPN: ${{ secrets.WOIDEN_VPN_OVPN }}
+  WOIDEN_VPN_AUTH: ${{ secrets.WOIDEN_VPN_AUTH }}
+  WOIDEN_GH_PAT: ${{ secrets.WOIDEN_GH_PAT }}
 
 jobs:
   renew:
+    name: 续期（② 号）
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      WOIDEN_BATCH_2: ${{ secrets.WOIDEN_BATCH_2 }}
-
+    # ⚠️ 必须只跑一个账号；若要一次跑多个账号，请在上游改脚本/工作流，不要在本仓改。
     steps:
-      - name: 检出代码
+      # 1) 检出本仓
+      - name: 检出本仓代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: 安装 Python
+      # 2) 准备产物目录
+      - name: 准备产物目录
+        run: |
+          mkdir -p logs screenshots
+          ls -la
+
+      # 3) 从私有仓取脚本
+      - name: 从私有仓取脚本
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PRIVATE_REPO }}
+          token: ${{ env.WOIDEN_GH_PAT }}
+          path: private-repo
+          fetch-depth: 1
+
+      # 4) 确认脚本存在
+      - name: 确认脚本存在
+        run: |
+          ls -R private-repo | head -n 200
+          test -f "private-repo/${{ env.SCRIPT_DIR }}/${{ env.SCRIPT_NAME }}" || {
+            echo "::error::私有仓中找不到脚本 private-repo/${{ env.SCRIPT_DIR }}/${{ env.SCRIPT_NAME }}"
+            exit 1
+          }
+          echo "脚本已确认：private-repo/${{ env.SCRIPT_DIR }}/${{ env.SCRIPT_NAME }}"
+
+      # 5) 校验 WOIDEN_BATCH_2 是否合法
+      - name: 校验 WOIDEN_BATCH_2
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          raw = os.environ.get("WOIDEN_BATCH", "")
+          if not raw.strip():
+              print("::error::WOIDEN_BATCH_2 为空，请在仓库 Settings → Secrets 里配置 WOIDEN_BATCH_2")
+              sys.exit(1)
+          try:
+              data = json.loads(raw)
+          except Exception as e:
+              print(f"::error::WOIDEN_BATCH_2 不是合法 JSON：{e}")
+              sys.exit(1)
+          if isinstance(data, dict):
+              accounts = [data]
+          elif isinstance(data, list):
+              accounts = data
+          else:
+              print("::error::WOIDEN_BATCH_2 必须是 JSON 对象或数组")
+              sys.exit(1)
+          # 固定只跑一个账号
+          if len(accounts) != 1:
+              print(f"::error::② 号固定只跑 1 个账号，当前 WOIDEN_BATCH_2 里有 {len(accounts)} 个账号，请只保留 1 个")
+              sys.exit(1)
+          a = accounts[0]
+          # 兼容两种字段名
+          if isinstance(a, dict):
+              email = a.get("email") or a.get("account") or a.get("username") or ""
+              pwd = a.get("password") or a.get("pswd") or ""
+              if not email or not pwd:
+                  print("::error::账号缺少 email/password，请检查 WOIDEN_BATCH_2")
+                  sys.exit(1)
+          elif isinstance(a, str):
+              print("::error::② 号账号必须是 JSON 对象（含 email/password），不要只写邮箱字符串")
+              sys.exit(1)
+          else:
+              print("::error::② 号账号格式不正确")
+              sys.exit(1)
+          print(f"账号校验通过：{email[:3]}***（共 1 个账号）")
+          PY
+
+      # 6) 安装 Python 与依赖
+      - name: 安装 Python 与依赖
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
+          python-version: "3.13"
       - name: 安装依赖
-        run: pip install --quiet requests
-
-      # =========================
-      # 账号1
-      # =========================
-      - name: 续期 账号1
-        env:
-          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_1 }}
-          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_1 }}
-          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_1 }}
-          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_1 }}
-          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_1 }}
         run: |
-          cat > /tmp/renew.py <<'PYEOF'
-          import os, json, time, random, requests, traceback
-          from urllib.parse import urlparse, parse_qs
+          python -m pip install --upgrade pip
+          pip install -q -r private-repo/requirements.txt || pip install -q requests playwright
 
-          SESSION = requests.Session()
-          SESSION.headers.update({
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept": "application/json, text/plain, */*",
-          })
+      # 7) 安装 WARP（仅 ② 号；若 Secret 为空则跳过）
+      - name: 安装 WARP
+        if: env.WOIDEN_WARP != ''
+        run: |
+          # WARP 只有在 ② 号才可能用到；若没配就跳过
+          echo "开始安装 WARP..."
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update -y
+          sudo apt-get install -y cloudflare-warp
+          # 若提供私钥则注册
+          if [ -n "${{ env.WOIDEN_PRIV_KEY }}" ]; then
+            echo "检测到 WOIDEN_PRIV_KEY，尝试注册 WARP..."
+            # 注意：私钥文件路径与格式见脚本注释；这里只做最小处理
+            mkdir -p ~/.config/warp || true
+            echo "${{ env.WOIDEN_PRIV_KEY }}" > /tmp/warp-priv-key
+            chmod 600 /tmp/warp-priv-key
+          fi
+          warp-cli --accept-tos register || true
+          warp-cli --accept-tos connect || true
+          sleep 5
+          curl -s https://ifconfig.me || true
+          echo "WARP 安装完成"
 
-          BASE = "https://www.woiden.com"
-          LOGIN_URL = BASE + "/api/login"
-          USER_URL = BASE + "/api/user"
-          RENEW_URL = BASE + "/api/user/renew"
-          ACCOUNTS_FILE = "/tmp/accounts.json"
+      # 8) 安装代理（若有；目前脚本主要用 WARP，此步为兜底）
+      - name: 安装代理
+        if: env.WOIDEN_VPN_OVPN != ''
+        run: |
+          echo "检测到 WOIDEN_VPN_OVPN，安装 OpenVPN..."
+          sudo apt-get update -y
+          sudo apt-get install -y openvpn
+          echo "${{ env.WOIDEN_VPN_OVPN }}" | base64 -d > /tmp/client.ovpn
+          echo "${{ env.WOIDEN_VPN_AUTH }}" | base64 -d > /tmp/auth.txt
+          chmod 600 /tmp/client.ovpn /tmp/auth.txt
+          sudo openvpn --config /tmp/client.ovpn --auth-user-pass /tmp/auth.txt --daemon
+          sleep 10
+          curl -s https://ifconfig.me || true
+          echo "VPN 已启动"
 
-          # 🔹🔹🔹 新增：加载多账号配置
-          def load_accounts():
-              raw = os.environ.get("WOIDEN_BATCH_2", "").strip()
-              accounts = []
-              if raw:
-                  try:
-                      data = json.loads(raw)
-                      if isinstance(data, list):
-                          for item in data:
-                              if isinstance(item, dict):
-                                  accounts.append(item)
-                              elif isinstance(item, str):
-                                  accounts.append({"account": item})
-                      elif isinstance(data, dict):
-                          accounts.append(data)
-                  except Exception:
-                      accounts = []
-                  if not accounts:
-                      value = raw.strip()
-                      # 兼容：纯账号列表
-                      # 兼容分号或换行分隔
-                      accounts = [{"account": x} for x in value.replace("\\n", ";").split(";") if x.strip()]
-              else:
-                  value = os.environ.get("WOIDEN_ACCOUNT", "").strip()
-                  if value:
-                      accounts = [{"account": value}]
-              return accounts
+      # 9) 随机延迟 0-60 秒（避免多账号同时跑）
+      - name: 随机延迟
+        run: |
+          DELAY=$((RANDOM % 61))
+          echo "随机延迟 ${DELAY} 秒..."
+          sleep $DELAY
 
-          def parse_cookie_value(value):
-              if not value:
-                  return None
-              value = str(value).strip()
-              if not value:
-                  return None
-              if value.startswith("{"):
-                  try:
-                      data = json.loads(value)
-                  except Exception:
-                      return None
-                  if isinstance(data, dict):
-                      return data.get("token") or data.get("access_token") or data.get("jwt") or data.get("session") or None
-                  return None
-              if "token=" in value:
-                  return value
-              return value
+      # 10) 执行续期脚本
+      - name: 执行续期脚本
+        id: renew
+        run: |
+          set -o pipefail
+          echo "开始执行续期脚本..."
+          python "private-repo/${{ env.SCRIPT_DIR }}/${{ env.SCRIPT_NAME }}" 2>&1 | tee logs/renew.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "脚本退出码：${EXIT_CODE}"
+          if [ "${EXIT_CODE}" -ne 0 ]; then
+            echo "RENEW_RESULT=失败" >> "$GITHUB_ENV"
+            echo "::warning::续期脚本执行失败，退出码 ${EXIT_CODE}"
+          else
+            echo "RENEW_RESULT=成功" >> "$GITHUB_ENV"
+          fi
+          # 即使脚本失败也继续提交日志/截图
+          exit 0
 
-          def normalize_cookie_value(raw):
-              if raw is None:
-                  return None
-              raw = str(raw).strip()
-              if not raw:
-                  return None
-              if raw.lower().startswith("bearer "):
-                  raw = raw[7:].strip()
-              return raw
+      # 11) 上传截图（供调试）
+      - name: 上传截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ github.run_id }}
+          path: screenshots/
+          if-no-files-found: ignore
+          retention-days: 7
 
-          def load_cookie():
-              value = os.environ.get("WOIDEN_COOKIE") or os.environ.get("WOIDEN_COOKIES") or ""
-              value = value.strip()
-              if value.startswith("{"):
-                  try:
-                      data = json.loads(value)
-                  except Exception:
-                      data = {}
-                  if isinstance(data, dict):
-                      for key in ("cookie", "Cookie", "COOKIE", "session", "token", "Authorization", "authorization"):
-                          if data.get(key):
-                              value = str(data[key])
-                              break
-              if value:
-                  return value
-              path = os.environ.get("WOIDEN_COOKIE_FILE") or ACCOUNTS_FILE
-              if path and os.path.exists(path):
-                  try:
-                      with open(path, "r", encoding="utf-8") as f:
-                          data = json.load(f)
-                      if isinstance(data, list) and data:
-                          item = data[0]
-                          if isinstance(item, dict):
-                              for key in ("cookie", "Cookie", "COOKIE", "session", "token"):
-                                  if item.get(key):
-                                      return str(item[key])
-                      elif isinstance(data, dict):
-                          for key in ("cookie", "Cookie", "COOKIE", "session", "token"):
-                              if data.get(key):
-                                  return str(data[key])
-                  except Exception:
-                      pass
-              return ""
+      # 12) 上传日志
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
-          def extract_token(resp):
-              for name in ("token", "access_token", "jwt", "session", "session_id"):
-                  value = resp.get(name)
-                  if isinstance(value, str) and value:
-                      return value
-              data = resp.get("data") or {}
-              if isinstance(data, dict):
-                  for name in ("token", "access_token", "jwt", "session", "session_id"):
-                      value = data.get(name)
-                      if isinstance(value, str) and value:
-                          return value
-              return None
+      # 13) 提交本次截图和日志到本仓
+      - name: 提交本次截图和日志
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+          git add logs screenshots || true
+          if git diff --cached --quiet; then
+            echo "没有新的截图/日志需要提交"
+            exit 0
+          fi
+          git commit -m "续期结果：${RENEW_RESULT:-未知}（${TIMESTAMP}）"
+          git push
 
-          def try_parse_json(text):
-              try:
-                  return json.loads(text)
-              except Exception:
-                  return None
-
-          def fetch_user_info(headers):
-              url = USER_URL
-              try:
-                  resp = SESSION.get(url, headers=headers, timeout=30)
-              except Exception as e:
-                  print(f"  🔴 请求异常: {e}")
-                  return None
-              return resp
-
-          def print_user_info(resp):
-              print(f"  📡 状态码: {resp.status_code}")
-              body = try_parse_json(resp.text)
-              print(f"  📦 响应: {json.dumps(body, ensure_ascii=False)[:2000] if body is not None else resp.text[:2000]}")
-              if not body:
-                  print("  ⚠️  响应不是 JSON 格式")
-                  return
-              if isinstance(body, dict) and body.get("data"):
-                  user = body["data"]
-              else:
-                  user = body
-              if not isinstance(user, dict):
-                  return
-              fields = {
-                  "email": user.get("email"),
-                  "username": user.get("username") or user.get("name"),
-                  "plan": user.get("plan") or user.get("package") or user.get("subscription"),
-                  "expires": user.get("expires_at") or user.get("expire_at") or user.get("expiry") or user.get("expired_at"),
-                  "traffic_used": user.get("traffic_used") or user.get("used_traffic"),
-                  "traffic_total": user.get("traffic_total") or user.get("total_traffic"),
+      # 14) 清理旧的 workflow 运行记录
+      - name: 清理旧运行记录
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'woiden-renew-2.yml',
+              per_page: 100,
+            });
+            const keep = 10;
+            const old = runs.data.workflow_runs.slice(keep);
+            for (const run of old) {
+              try {
+                await github.rest.actions.deleteWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id,
+                });
+                console.log(`已删除旧运行 ${run.id}`);
+              } catch (e) {
+                console.log(`删除运行 ${run.id} 失败：${e.message}`);
               }
-              for k, v in fields.items():
-                  if v is not None:
-                      print(f"  ℹ️ {k}: {v}")
-
-          def do_login(email, password):
-              payload = {"email": email, "password": password}
-              resp = SESSION.post(LOGIN_URL, json=payload, timeout=30)
-              return resp
-
-          def do_renew(headers):
-              try:
-                  resp = SESSION.post(RENEW_URL, headers=headers, timeout=30)
-              except Exception as e:
-                  print(f"  🔴 续期请求异常: {e}")
-                  return None
-              return resp
-
-          def mask_secret(value):
-              if not value:
-                  return "(空)"
-              value = str(value)
-              if len(value) <= 8:
-                  return value[:2] + "***"
-              return value[:4] + "***" + value[-4:]
-
-          def run_single(account, idx, total):
-              email = account.get("email") or account.get("account") or ""
-              password = account.get("password") or account.get("pswd") or ""
-              cookie = account.get("cookie") or ""
-              print(f"\n{'='*60}")
-              print(f"📌 账号 {idx}/{total}: {email or '(未提供邮箱)'}")
-              print(f"{'='*60}")
-              print(f"  🔑 邮箱: {mask_secret(email)}")
-              print(f"  🔑 密码: {'已配置' if password else '未配置'}")
-              print(f"  🍪 Cookie: {'已配置' if cookie else '未配置'}")
-              print(f"  📦 账号配置: {json.dumps({k: ('***' if k in ('password', 'pswd') else v) for k, v in account.items()}, ensure_ascii=False)}")
-
-              headers = {}
-              token = None
-              cookie_value = None
-
-              if cookie:
-                  parsed = parse_cookie_value(cookie)
-                  cookie_value = normalize_cookie_value(parsed)
-                  if cookie_value:
-                      headers["Cookie"] = cookie_value
-                      headers["Authorization"] = f"Bearer {cookie_value}"
-              else:
-                  env_cookie = load_cookie()
-                  if env_cookie:
-                      parsed = parse_cookie_value(env_cookie)
-                      cookie_value = normalize_cookie_value(parsed)
-                      if cookie_value:
-                          headers["Cookie"] = cookie_value
-                          headers["Authorization"] = f"Bearer {cookie_value}"
-
-              if headers:
-                  print("  🔍 使用 Cookie 尝试获取用户信息...")
-                  resp = fetch_user_info(headers)
-                  if resp is not None and resp.status_code == 200:
-                      print("  ✅ Cookie 有效，直接续期")
-                      print_user_info(resp)
-                      renew_resp = do_renew(headers)
-                      if renew_resp is not None:
-                          print(f"  📡 续期状态码: {renew_resp.status_code}")
-                          body = try_parse_json(renew_resp.text)
-                          print(f"  📦 续期响应: {json.dumps(body, ensure_ascii=False)[:2000] if body is not None else renew_resp.text[:2000]}")
-                          if renew_resp.status_code == 200:
-                              print("  ✅ 续期成功")
-                              return True
-                          else:
-                              print("  ❌ 续期失败")
-                              return False
-                      else:
-                          print("  ❌ 续期请求失败")
-                          return False
-                  else:
-                      print(f"  ⚠️ Cookie 无效或已过期 (状态码: {resp.status_code if resp is not None else '无响应'})，尝试账号密码登录")
-
-              if not email or not password:
-                  print("  ❌ 未提供邮箱/密码，且 Cookie 无效，跳过该账号")
-                  return False
-
-              print("  🔐 尝试账号密码登录...")
-              try:
-                  login_resp = do_login(email, password)
-              except Exception as e:
-                  print(f"  🔴 登录请求异常: {e}")
-                  traceback.print_exc()
-                  return False
-
-              print(f"  📡 登录状态码: {login_resp.status_code}")
-              login_body = try_parse_json(login_resp.text)
-              print(f"  📦 登录响应: {json.dumps(login_body, ensure_ascii=False)[:2000] if login_body is not None else login_resp.text[:2000]}")
-
-              if login_resp.status_code != 200:
-                  print("  ❌ 登录失败")
-                  return False
-
-              token = extract_token(login_body) if isinstance(login_body, dict) else None
-              if not token:
-                  set_cookie = login_resp.headers.get("Set-Cookie") or login_resp.headers.get("set-cookie")
-                  if set_cookie:
-                      token = set_cookie
-              if token:
-                  headers = {}
-                  headers["Authorization"] = f"Bearer {token}"
-                  headers["Cookie"] = token if "=" in token else f"token={token}"
-              else:
-                  print("  ⚠️ 登录成功但未获取到 Token，尝试使用 Session Cookie")
-                  headers = {}
-                  for c in login_resp.cookies:
-                      headers.setdefault("Cookie", "")
-                      headers["Cookie"] += f"{c.name}={c.value}; "
-
-              print("  🔍 登录后获取用户信息...")
-              resp = fetch_user_info(headers)
-              if resp is not None:
-                  print_user_info(resp)
-              renew_resp = do_renew(headers)
-              if renew_resp is not None:
-                  print(f"  📡 续期状态码: {renew_resp.status_code}")
-                  body = try_parse_json(renew_resp.text)
-                  print(f"  📦 续期响应: {json.dumps(body, ensure_ascii=False)[:2000] if body is not None else renew_resp.text[:2000]}")
-                  if renew_resp.status_code == 200:
-                      print("  ✅ 续期成功")
-                      return True
-                  else:
-                      print("  ❌ 续期失败")
-                      return False
-              else:
-                  print("  ❌ 续期请求失败")
-                  return False
-
-          def main():
-              accounts = load_accounts()
-              print(f"📋 共加载 {len(accounts)} 个账号")
-              if not accounts:
-                  print("❌ 未找到任何账号配置，请检查 WOIDEN_BATCH_2 或 WOIDEN_ACCOUNT")
-                  return
-              results = []
-              for idx, account in enumerate(accounts, start=1):
-                  try:
-                      ok = run_single(account, idx, len(accounts))
-                  except Exception as e:
-                      print(f"  🔴 账号 {idx} 处理异常: {e}")
-                      traceback.print_exc()
-                      ok = False
-                  results.append(ok)
-                  if idx < len(accounts):
-                      delay = random.randint(5, 15)
-                      print(f"⏳ 等待 {delay} 秒后处理下一个账号...")
-                      time.sleep(delay)
-              success = sum(1 for r in results if r)
-              print(f"\n{'='*60}")
-              print(f"📊 汇总: 成功 {success}/{len(accounts)}，失败 {len(accounts)-success}/{len(accounts)}")
-              print(f"{'='*60}")
-              if success < len(accounts):
-                  raise SystemExit(1)
-
-          if __name__ == "__main__":
-              main()
-          PYEOF
-          python /tmp/renew.py
-
-      # =========================
-      # 账号2
-      # =========================
-      - name: 续期 账号2
-        env:
-          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_2 }}
-          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_2 }}
-          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_2 }}
-          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_2 }}
-          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_2 }}
-        run: |
-          python /tmp/renew.py
-
-      # =========================
-      # 账号3
-      # =========================
-      - name: 续期 账号3
-        env:
-          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_3 }}
-          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_3 }}
-          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_3 }}
-          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_3 }}
-          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_3 }}
-        run: |
-          python /tmp/renew.py
-
-      # =========================
-      # 账号4
-      # =========================
-      - name: 续期 账号4
-        env:
-          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_4 }}
-          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_4 }}
-          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_4 }}
-          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_4 }}
-          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_4 }}
-        run: |
-          python /tmp/renew.py
-
-      # =========================
-      # 账号5
-      # =========================
-      - name: 续期 账号5
-        env:
-          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_5 }}
-          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_5 }}
-          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_5 }}
-          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_5 }}
-          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_5 }}
-        run: |
-          python /tmp/renew.py
+            }
