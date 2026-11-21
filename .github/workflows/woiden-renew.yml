@@ -67,8 +67,8 @@ jobs:
       PROJECT_DIR: woiden
       SCRIPT_NAME: woiden-renew.py
       SCREENSHOT_DIR: screenshots
-    # 仅 workflow_dispatch 勾选 force 时为 1：绕过「今日已成功」短路，强制重跑一班（验证用）
-    FORCE_RUN: ${{ inputs.force && '1' || '0' }}
+      # 仅 workflow_dispatch 勾选 force 时为 1：绕过「今日已成功」短路，强制重跑一班（验证用）
+      FORCE_RUN: ${{ inputs.force && '1' || '0' }}
       # 时间文件放在公开仓库根目录的 woiden/time.txt，刻意【不】放进私有仓库的
       # 检出目录：那个目录里有自己的 .git，git 会把整棵子树当嵌套仓库，对未跟踪
       # 路径执行 git add 会静默无操作（退出码 0 但什么都没暂存），接着 commit 报
