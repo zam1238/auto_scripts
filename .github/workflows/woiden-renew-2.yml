@@ -1,36 +1,25 @@
 # =============================================================================
-# woiden.id 自动续期 —— ② 号（@kimisiwa）
-# -----------------------------------------------------------------------------
-# 每组一个 workflow，Secret 里只放该组账号：
-#   - WOIDEN_BATCH_2：此组账号的 JSON（格式见仓库 README / 脚本注释）
-#   - WOIDEN_GH_PAT：跨仓库取脚本 + 提交日志所需的 PAT（Contents: Read and write）
-#   - ② 号专用：WOIDEN_WARP / WOIDEN_PRIV_KEY / WOIDEN_PRIV_PUB（若脚本支持则注入）
-#   - ③ 号专用：WOIDEN_VPN_OVPN / WOIDEN_VPN_AUTH（若脚本支持则注入）
-# 脚本统一放在私有仓 doraemon6789/auto_woiden_private:scripts/woiden-renew.py。
-# 注意：脚本里默认不再清 chrome 里的网站数据、也不清本地持久化数据；
-#       每次以“干净浏览器”起 Chrome，并以无痕模式运行。
-#       固定跑 1 个账号（单次固定 1 个账号，没有账号切换），跑完就把截图和日
-#       志交回本仓；commit 的 message 里只写"续期结果：成功/失败"。
-# 2026-11-19 之前这里有过"跑完后把私有仓的旧截图/旧日志清掉再提交"的逻辑，
-# 2026-11-19 之后改成“只往本仓交本次截图和日志，不再去动私有仓”。
-# -----------------------------------------------------------------------------
-# 触发方式（北京时间 07:30、12:30、16:30 左右各跑一次）：
-#   - 07:30 → UTC 23:30（前一日）   → cron: '30 23 * * *'
-#   - 12:30 → UTC 04:30（当日）     → cron: '30 4 * * *'
-#   - 16:30 → UTC 08:30（当日）     → cron: '0 8 * * *'
-#   - 手动跑一次（强制本次必跑，跳过"当日已成功则跳过"）
-#     → Actions → 本 workflow → Run workflow → force: true
-# -----------------------------------------------------------------------------
-# ⚠️ 重要：本文件由 doraemon6789 仓库直接提供，不要手改。
-# 2026-11-19 之后上游脚本改动，涉及：
-# - WARP
-# - commit d06940e1 之前"每次都从头重建整个 chrome 配置目录"（会丢失本地持久化
-#   数据，如已登录的网站会话）改为只清理 chrome 配置目录中“易过期”的文件，
-#   并且每次都用"干净浏览器"起 Chrome 并以无痕模式运行（无痕窗口不写持久化）。
-# - 私有仓 doraemon6789/auto_woiden_private 里的脚本里默认会清掉登录成功的
-#   账号在续期完成以后留在"已续期的账号列表"里的账号，见脚本注释。
-# - 2026-11-19 之前这里有过"跑完后把私有仓的旧截图/旧日志清掉再提交"的逻辑，
-#   2026-11-19 之后改成"只往本仓交本次截图和日志，不再去动私有仓"。
+# woiden.id 自动续期 —— ②号 (@kimisiwa)
+# 本文件 = woiden 第 ② 个组（Github handle @kimisiwa 那一套）
+# secret WOIDEN_BATCH_2
+# 时间文件 woiden/2/time.txt (state.enc 也在 woiden/2/)
+# group woiden_renew_2
+# cron 北京时间 07:30 / 12:30 / 16:00 (与 ① 号错开 20-30 分钟)
+# 第 ① 个账号 (@mimosiwa) 在 woiden-renew.yml，两文件互不影响、别合开。
+# ★ woiden.id 和 hax.co.id 是两个独立站点，账号、secret 都不通用。
+# hax 在 hus-renew.yml，本文件只跑 woiden.id。
+#
+# 需要配置的 Secrets (在 public 仓 Settings -> Secrets and variables -> Actions 里建)：
+# WOIDEN_BATCH_2 phone, tg_bot_token, tg_chat_id, tg_api_hash, tg_session
+# (本文件第 2 对应 @kimisiwa; ① 号 woiden-renew.yml 读 WOIDEN_BATCH)
+# (若本站只分发验证码 in 分组，也支持 JSON 数组，见 woiden-renew.py)
+# WOIDEN_TG_BOT 可选，站内 TG 验证时用户名，站内、站外 TG_bot
+# (woiden.id 与 hax.co.id 共用同一个 bot)
+# HY2_PROXY_URL 代理 URL, woiden.id 有 Cloudflare 挑战，强烈建议配置
+# PRIVATE_REPO_TOKEN 有 auto_woiden_private 该仓库的 PAT
+# SOCKS_PORT 可选，默认 10808
+# WOIDEN_GH_PAT 可选，若用 https 方式拉取私有仓则用 WOIDEN_GH_PAT 替代
+# PRIVATE_REPO_TOKEN，默认值 doraemon6789/auto_woiden_private
 # =============================================================================
 
 name: ♻️ Woiden Auto Renew ②-kimi
@@ -41,12 +30,21 @@ on:
     - cron: '30 23 * * *'
     # 北京时间 12:30 → UTC 04:30（当日）
     - cron: '30 4 * * *'
-    # 北京时间 16:30 → UTC 08:30（当日）
+    # 北京时间 16:00 → UTC 08:00（当日）
     - cron: '0 8 * * *'
+    # 注意：① 号 (woiden-renew.yml) 的时间是
+    # 北京时间 07:10 (UTC 23:10) / 12:10 (UTC 04:10) / 16:10 (UTC 08:10)
+    # ② 号 hus② 的时间是
+    # 北京时间 07:20 (UTC 23:20) / 12:20 (UTC 04:20) / 16:20 (UTC 08:20)
   workflow_dispatch:
     inputs:
       force:
-        description: '强制执行（跳过"当日已成功则跳过"）'
+        description: '忽略当日异常，强制再跑一班（验证/调试用）'
+        required: false
+        default: false
+        type: boolean
+      debug:
+        description: '调试模式（只打印关键信息，不真正提交）'
         required: false
         default: false
         type: boolean
@@ -55,60 +53,67 @@ permissions:
   contents: write
   actions: write
 
-concurrency:
-  group: woiden-renew-2
-  cancel-in-progress: false
-
-env:
-  TZ: Asia/Shanghai
-  PRIVATE_REPO: doraemon6789/auto_woiden_private
-  SCRIPT_NAME: woiden-renew.py
-  SCRIPT_DIR: scripts
-  WOIDEN_BATCH: ${{ secrets.WOIDEN_BATCH_2 }}
-  WOIDEN_WARP: ${{ secrets.WOIDEN_WARP }}
-  WOIDEN_PRIV_KEY: ${{ secrets.WOIDEN_PRIV_KEY }}
-  WOIDEN_PRIV_PUB: ${{ secrets.WOIDEN_PRIV_PUB }}
-  WOIDEN_VPN_OVPN: ${{ secrets.WOIDEN_VPN_OVPN }}
-  WOIDEN_VPN_AUTH: ${{ secrets.WOIDEN_VPN_AUTH }}
-  WOIDEN_GH_PAT: ${{ secrets.WOIDEN_GH_PAT }}
-
 jobs:
   renew:
-    name: 续期（② 号）
+    name: 续期（②号）
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-    # ⚠️ 必须只跑一个账号；若要一次跑多个账号，请在上游改脚本/工作流，不要在本仓改。
+    timeout-minutes: 60
+    concurrency:
+      group: woiden_renew_2
+      cancel-in-progress: false
+    env:
+      WOIDEN_BATCH: ${{ secrets.WOIDEN_BATCH_2 }}
+      PROXY_CONTENT: ${{ secrets.HY2_PROXY_URL }}
+      SOCKS_PORT: ${{ secrets.SOCKS_PORT }}
+      PRIVATE_REPO_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+      PRIVATE_REPO: doraemon6789/auto_woiden_private
+      PROJECT_DIR: woiden
+      SCRIPT_NAME: woiden-renew.py
+      SCREENSHOT_DIR: woiden/2/screenshots
+      FORCE_RUN: ${{ github.event.inputs.force }}
+      TIME_DIR: woiden/2
+      DEBUG_FLAG: ${{ github.event.inputs.debug }}
+      MAX_RENEW_RETRIES: "3"
+      MAX_WARP_RETRIES: "5"
+      MAX_WARP_ROTATE_ATTEMPTS: "5"
+      MAX_WARP_ROTATE_SECONDS: "240"
+      WARP_SAME_IP_GIVEUP: "10"
+      MAX_CHANNEL_SWITCHES: "1"
+      MAX_LOGIN_RETRIES: "3"
+      PROXY_RETRY_COUNT: "5"
+      WARP_CMD_TIMEOUT: "60"
+
     steps:
-      # 1) 检出本仓
-      - name: 检出本仓代码
+      # 1) 检出公开仓库
+      - name: 检出公开仓库
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # 2) 准备产物目录
-      - name: 准备产物目录
+      # 2) 创建输出目录
+      - name: 创建输出目录
         run: |
-          mkdir -p logs screenshots
+          mkdir -p "$TIME_DIR" "$SCREENSHOT_DIR" logs
           ls -la
 
-      # 3) 从私有仓取脚本
-      - name: 从私有仓取脚本
+      # 3) 检出私有仓库
+      - name: 检出私有仓库
         uses: actions/checkout@v4
         with:
           repository: ${{ env.PRIVATE_REPO }}
-          token: ${{ env.WOIDEN_GH_PAT }}
+          token: ${{ env.PRIVATE_REPO_TOKEN }}
           path: private-repo
           fetch-depth: 1
 
-      # 4) 确认脚本存在
-      - name: 确认脚本存在
+      # 4) 确认脚本已就位
+      - name: 确认脚本已就位
         run: |
           ls -R private-repo | head -n 200
-          test -f "private-repo/${{ env.SCRIPT_DIR }}/${{ env.SCRIPT_NAME }}" || {
-            echo "::error::私有仓中找不到脚本 private-repo/${{ env.SCRIPT_DIR }}/${{ env.SCRIPT_NAME }}"
+          test -f "private-repo/${PROJECT_DIR}/${SCRIPT_NAME}" || {
+            echo "::error::私有仓中找不到脚本 private-repo/${PROJECT_DIR}/${SCRIPT_NAME}"
             exit 1
           }
-          echo "脚本已确认：private-repo/${{ env.SCRIPT_DIR }}/${{ env.SCRIPT_NAME }}"
+          echo "脚本已确认：private-repo/${PROJECT_DIR}/${SCRIPT_NAME}"
 
       # 5) 校验 WOIDEN_BATCH_2 是否合法
       - name: 校验 WOIDEN_BATCH_2
@@ -162,46 +167,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -q -r private-repo/requirements.txt || pip install -q requests playwright
 
-      # 7) 安装 WARP（仅 ② 号；若 Secret 为空则跳过）
+      # 7) 安装 WARP
       - name: 安装 WARP
-        if: env.WOIDEN_WARP != ''
-        run: |
-          # WARP 只有在 ② 号才可能用到；若没配就跳过
-          echo "开始安装 WARP..."
-          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-          sudo apt-get update -y
-          sudo apt-get install -y cloudflare-warp
-          # 若提供私钥则注册
-          if [ -n "${{ env.WOIDEN_PRIV_KEY }}" ]; then
-            echo "检测到 WOIDEN_PRIV_KEY，尝试注册 WARP..."
-            # 注意：私钥文件路径与格式见脚本注释；这里只做最小处理
-            mkdir -p ~/.config/warp || true
-            echo "${{ env.WOIDEN_PRIV_KEY }}" > /tmp/warp-priv-key
-            chmod 600 /tmp/warp-priv-key
-          fi
-          warp-cli --accept-tos register || true
-          warp-cli --accept-tos connect || true
-          sleep 5
-          curl -s https://ifconfig.me || true
-          echo "WARP 安装完成"
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: dual
 
-      # 8) 安装代理（若有；目前脚本主要用 WARP，此步为兜底）
+      # 8) 安装代理
       - name: 安装代理
-        if: env.WOIDEN_VPN_OVPN != ''
         run: |
-          echo "检测到 WOIDEN_VPN_OVPN，安装 OpenVPN..."
-          sudo apt-get update -y
-          sudo apt-get install -y openvpn
-          echo "${{ env.WOIDEN_VPN_OVPN }}" | base64 -d > /tmp/client.ovpn
-          echo "${{ env.WOIDEN_VPN_AUTH }}" | base64 -d > /tmp/auth.txt
-          chmod 600 /tmp/client.ovpn /tmp/auth.txt
-          sudo openvpn --config /tmp/client.ovpn --auth-user-pass /tmp/auth.txt --daemon
-          sleep 10
-          curl -s https://ifconfig.me || true
-          echo "VPN 已启动"
+          if [ -z "$PROXY_CONTENT" ]; then
+            echo "未配置 HY2_PROXY_URL，跳过代理安装"
+            exit 0
+          fi
+          echo "正在安装代理..."
+          echo "$PROXY_CONTENT" > /tmp/proxy.txt
+          echo "代理配置已写入"
 
-      # 9) 随机延迟 0-60 秒（避免多账号同时跑）
+      # 9) 随机延迟
       - name: 随机延迟
         run: |
           DELAY=$((RANDOM % 61))
@@ -214,7 +197,7 @@ jobs:
         run: |
           set -o pipefail
           echo "开始执行续期脚本..."
-          python "private-repo/${{ env.SCRIPT_DIR }}/${{ env.SCRIPT_NAME }}" 2>&1 | tee logs/renew.log
+          python "private-repo/${PROJECT_DIR}/${SCRIPT_NAME}" 2>&1 | tee logs/renew.log
           EXIT_CODE=${PIPESTATUS[0]}
           echo "脚本退出码：${EXIT_CODE}"
           if [ "${EXIT_CODE}" -ne 0 ]; then
@@ -223,16 +206,15 @@ jobs:
           else
             echo "RENEW_RESULT=成功" >> "$GITHUB_ENV"
           fi
-          # 即使脚本失败也继续提交日志/截图
           exit 0
 
-      # 11) 上传截图（供调试）
+      # 11) 上传截图
       - name: 上传截图
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-${{ github.run_id }}
-          path: screenshots/
+          path: ${{ env.SCREENSHOT_DIR }}/
           if-no-files-found: ignore
           retention-days: 7
 
@@ -246,26 +228,37 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # 13) 提交本次截图和日志到本仓
-      - name: 提交本次截图和日志
+      # 13) 清理截图
+      - name: 清理截图
+        if: always()
+        run: |
+          echo "清理 7 天前的截图..."
+          find "$SCREENSHOT_DIR" -type f -mtime +7 -delete || true
+          find "$SCREENSHOT_DIR" -type d -empty -delete || true
+          ls -R "$SCREENSHOT_DIR" || true
+
+      # 14) 提交时间
+      - name: 提交时间
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-          git add logs screenshots || true
+          echo "$TIMESTAMP" > "$TIME_DIR/time.txt"
+          git add "$TIME_DIR" "$SCREENSHOT_DIR" logs || true
           if git diff --cached --quiet; then
-            echo "没有新的截图/日志需要提交"
+            echo "没有新的时间/截图/日志需要提交"
             exit 0
           fi
           git commit -m "续期结果：${RENEW_RESULT:-未知}（${TIMESTAMP}）"
           git push
 
-      # 14) 清理旧的 workflow 运行记录
+      # 15) 清理旧运行记录
       - name: 清理旧运行记录
         if: always()
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const runs = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
