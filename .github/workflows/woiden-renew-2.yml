@@ -1,0 +1,417 @@
+name: "Woiden 自动续期（第2批）"
+
+on:
+  schedule:
+    # 北京时间 21:30 → UTC 13:30
+    - cron: "30 13 * * *"
+  workflow_dispatch:
+
+# 并发控制：同一时间只跑一个，避免重复续期
+concurrency:
+  group: woiden-renew-2
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      WOIDEN_BATCH_2: ${{ secrets.WOIDEN_BATCH_2 }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: pip install --quiet requests
+
+      # =========================
+      # 账号1
+      # =========================
+      - name: 续期 账号1
+        env:
+          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_1 }}
+          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_1 }}
+          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_1 }}
+          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_1 }}
+          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_1 }}
+        run: |
+          cat > /tmp/renew.py <<'PYEOF'
+          import os, json, time, random, requests, traceback
+          from urllib.parse import urlparse, parse_qs
+
+          SESSION = requests.Session()
+          SESSION.headers.update({
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "application/json, text/plain, */*",
+          })
+
+          BASE = "https://www.woiden.com"
+          LOGIN_URL = BASE + "/api/login"
+          USER_URL = BASE + "/api/user"
+          RENEW_URL = BASE + "/api/user/renew"
+          ACCOUNTS_FILE = "/tmp/accounts.json"
+
+          # 🔹🔹🔹 新增：加载多账号配置
+          def load_accounts():
+              raw = os.environ.get("WOIDEN_BATCH_2", "").strip()
+              accounts = []
+              if raw:
+                  try:
+                      data = json.loads(raw)
+                      if isinstance(data, list):
+                          for item in data:
+                              if isinstance(item, dict):
+                                  accounts.append(item)
+                              elif isinstance(item, str):
+                                  accounts.append({"account": item})
+                      elif isinstance(data, dict):
+                          accounts.append(data)
+                  except Exception:
+                      accounts = []
+                  if not accounts:
+                      value = raw.strip()
+                      # 兼容：纯账号列表
+                      # 兼容分号或换行分隔
+                      accounts = [{"account": x} for x in value.replace("\\n", ";").split(";") if x.strip()]
+              else:
+                  value = os.environ.get("WOIDEN_ACCOUNT", "").strip()
+                  if value:
+                      accounts = [{"account": value}]
+              return accounts
+
+          def parse_cookie_value(value):
+              if not value:
+                  return None
+              value = str(value).strip()
+              if not value:
+                  return None
+              if value.startswith("{"):
+                  try:
+                      data = json.loads(value)
+                  except Exception:
+                      return None
+                  if isinstance(data, dict):
+                      return data.get("token") or data.get("access_token") or data.get("jwt") or data.get("session") or None
+                  return None
+              if "token=" in value:
+                  return value
+              return value
+
+          def normalize_cookie_value(raw):
+              if raw is None:
+                  return None
+              raw = str(raw).strip()
+              if not raw:
+                  return None
+              if raw.lower().startswith("bearer "):
+                  raw = raw[7:].strip()
+              return raw
+
+          def load_cookie():
+              value = os.environ.get("WOIDEN_COOKIE") or os.environ.get("WOIDEN_COOKIES") or ""
+              value = value.strip()
+              if value.startswith("{"):
+                  try:
+                      data = json.loads(value)
+                  except Exception:
+                      data = {}
+                  if isinstance(data, dict):
+                      for key in ("cookie", "Cookie", "COOKIE", "session", "token", "Authorization", "authorization"):
+                          if data.get(key):
+                              value = str(data[key])
+                              break
+              if value:
+                  return value
+              path = os.environ.get("WOIDEN_COOKIE_FILE") or ACCOUNTS_FILE
+              if path and os.path.exists(path):
+                  try:
+                      with open(path, "r", encoding="utf-8") as f:
+                          data = json.load(f)
+                      if isinstance(data, list) and data:
+                          item = data[0]
+                          if isinstance(item, dict):
+                              for key in ("cookie", "Cookie", "COOKIE", "session", "token"):
+                                  if item.get(key):
+                                      return str(item[key])
+                      elif isinstance(data, dict):
+                          for key in ("cookie", "Cookie", "COOKIE", "session", "token"):
+                              if data.get(key):
+                                  return str(data[key])
+                  except Exception:
+                      pass
+              return ""
+
+          def extract_token(resp):
+              for name in ("token", "access_token", "jwt", "session", "session_id"):
+                  value = resp.get(name)
+                  if isinstance(value, str) and value:
+                      return value
+              data = resp.get("data") or {}
+              if isinstance(data, dict):
+                  for name in ("token", "access_token", "jwt", "session", "session_id"):
+                      value = data.get(name)
+                      if isinstance(value, str) and value:
+                          return value
+              return None
+
+          def try_parse_json(text):
+              try:
+                  return json.loads(text)
+              except Exception:
+                  return None
+
+          def fetch_user_info(headers):
+              url = USER_URL
+              try:
+                  resp = SESSION.get(url, headers=headers, timeout=30)
+              except Exception as e:
+                  print(f"  🔴 请求异常: {e}")
+                  return None
+              return resp
+
+          def print_user_info(resp):
+              print(f"  📡 状态码: {resp.status_code}")
+              body = try_parse_json(resp.text)
+              print(f"  📦 响应: {json.dumps(body, ensure_ascii=False)[:2000] if body is not None else resp.text[:2000]}")
+              if not body:
+                  print("  ⚠️  响应不是 JSON 格式")
+                  return
+              if isinstance(body, dict) and body.get("data"):
+                  user = body["data"]
+              else:
+                  user = body
+              if not isinstance(user, dict):
+                  return
+              fields = {
+                  "email": user.get("email"),
+                  "username": user.get("username") or user.get("name"),
+                  "plan": user.get("plan") or user.get("package") or user.get("subscription"),
+                  "expires": user.get("expires_at") or user.get("expire_at") or user.get("expiry") or user.get("expired_at"),
+                  "traffic_used": user.get("traffic_used") or user.get("used_traffic"),
+                  "traffic_total": user.get("traffic_total") or user.get("total_traffic"),
+              }
+              for k, v in fields.items():
+                  if v is not None:
+                      print(f"  ℹ️ {k}: {v}")
+
+          def do_login(email, password):
+              payload = {"email": email, "password": password}
+              resp = SESSION.post(LOGIN_URL, json=payload, timeout=30)
+              return resp
+
+          def do_renew(headers):
+              try:
+                  resp = SESSION.post(RENEW_URL, headers=headers, timeout=30)
+              except Exception as e:
+                  print(f"  🔴 续期请求异常: {e}")
+                  return None
+              return resp
+
+          def mask_secret(value):
+              if not value:
+                  return "(空)"
+              value = str(value)
+              if len(value) <= 8:
+                  return value[:2] + "***"
+              return value[:4] + "***" + value[-4:]
+
+          def run_single(account, idx, total):
+              email = account.get("email") or account.get("account") or ""
+              password = account.get("password") or account.get("pswd") or ""
+              cookie = account.get("cookie") or ""
+              print(f"\n{'='*60}")
+              print(f"📌 账号 {idx}/{total}: {email or '(未提供邮箱)'}")
+              print(f"{'='*60}")
+              print(f"  🔑 邮箱: {mask_secret(email)}")
+              print(f"  🔑 密码: {'已配置' if password else '未配置'}")
+              print(f"  🍪 Cookie: {'已配置' if cookie else '未配置'}")
+              print(f"  📦 账号配置: {json.dumps({k: ('***' if k in ('password', 'pswd') else v) for k, v in account.items()}, ensure_ascii=False)}")
+
+              headers = {}
+              token = None
+              cookie_value = None
+
+              if cookie:
+                  parsed = parse_cookie_value(cookie)
+                  cookie_value = normalize_cookie_value(parsed)
+                  if cookie_value:
+                      headers["Cookie"] = cookie_value
+                      headers["Authorization"] = f"Bearer {cookie_value}"
+              else:
+                  env_cookie = load_cookie()
+                  if env_cookie:
+                      parsed = parse_cookie_value(env_cookie)
+                      cookie_value = normalize_cookie_value(parsed)
+                      if cookie_value:
+                          headers["Cookie"] = cookie_value
+                          headers["Authorization"] = f"Bearer {cookie_value}"
+
+              if headers:
+                  print("  🔍 使用 Cookie 尝试获取用户信息...")
+                  resp = fetch_user_info(headers)
+                  if resp is not None and resp.status_code == 200:
+                      print("  ✅ Cookie 有效，直接续期")
+                      print_user_info(resp)
+                      renew_resp = do_renew(headers)
+                      if renew_resp is not None:
+                          print(f"  📡 续期状态码: {renew_resp.status_code}")
+                          body = try_parse_json(renew_resp.text)
+                          print(f"  📦 续期响应: {json.dumps(body, ensure_ascii=False)[:2000] if body is not None else renew_resp.text[:2000]}")
+                          if renew_resp.status_code == 200:
+                              print("  ✅ 续期成功")
+                              return True
+                          else:
+                              print("  ❌ 续期失败")
+                              return False
+                      else:
+                          print("  ❌ 续期请求失败")
+                          return False
+                  else:
+                      print(f"  ⚠️ Cookie 无效或已过期 (状态码: {resp.status_code if resp is not None else '无响应'})，尝试账号密码登录")
+
+              if not email or not password:
+                  print("  ❌ 未提供邮箱/密码，且 Cookie 无效，跳过该账号")
+                  return False
+
+              print("  🔐 尝试账号密码登录...")
+              try:
+                  login_resp = do_login(email, password)
+              except Exception as e:
+                  print(f"  🔴 登录请求异常: {e}")
+                  traceback.print_exc()
+                  return False
+
+              print(f"  📡 登录状态码: {login_resp.status_code}")
+              login_body = try_parse_json(login_resp.text)
+              print(f"  📦 登录响应: {json.dumps(login_body, ensure_ascii=False)[:2000] if login_body is not None else login_resp.text[:2000]}")
+
+              if login_resp.status_code != 200:
+                  print("  ❌ 登录失败")
+                  return False
+
+              token = extract_token(login_body) if isinstance(login_body, dict) else None
+              if not token:
+                  set_cookie = login_resp.headers.get("Set-Cookie") or login_resp.headers.get("set-cookie")
+                  if set_cookie:
+                      token = set_cookie
+              if token:
+                  headers = {}
+                  headers["Authorization"] = f"Bearer {token}"
+                  headers["Cookie"] = token if "=" in token else f"token={token}"
+              else:
+                  print("  ⚠️ 登录成功但未获取到 Token，尝试使用 Session Cookie")
+                  headers = {}
+                  for c in login_resp.cookies:
+                      headers.setdefault("Cookie", "")
+                      headers["Cookie"] += f"{c.name}={c.value}; "
+
+              print("  🔍 登录后获取用户信息...")
+              resp = fetch_user_info(headers)
+              if resp is not None:
+                  print_user_info(resp)
+              renew_resp = do_renew(headers)
+              if renew_resp is not None:
+                  print(f"  📡 续期状态码: {renew_resp.status_code}")
+                  body = try_parse_json(renew_resp.text)
+                  print(f"  📦 续期响应: {json.dumps(body, ensure_ascii=False)[:2000] if body is not None else renew_resp.text[:2000]}")
+                  if renew_resp.status_code == 200:
+                      print("  ✅ 续期成功")
+                      return True
+                  else:
+                      print("  ❌ 续期失败")
+                      return False
+              else:
+                  print("  ❌ 续期请求失败")
+                  return False
+
+          def main():
+              accounts = load_accounts()
+              print(f"📋 共加载 {len(accounts)} 个账号")
+              if not accounts:
+                  print("❌ 未找到任何账号配置，请检查 WOIDEN_BATCH_2 或 WOIDEN_ACCOUNT")
+                  return
+              results = []
+              for idx, account in enumerate(accounts, start=1):
+                  try:
+                      ok = run_single(account, idx, len(accounts))
+                  except Exception as e:
+                      print(f"  🔴 账号 {idx} 处理异常: {e}")
+                      traceback.print_exc()
+                      ok = False
+                  results.append(ok)
+                  if idx < len(accounts):
+                      delay = random.randint(5, 15)
+                      print(f"⏳ 等待 {delay} 秒后处理下一个账号...")
+                      time.sleep(delay)
+              success = sum(1 for r in results if r)
+              print(f"\n{'='*60}")
+              print(f"📊 汇总: 成功 {success}/{len(accounts)}，失败 {len(accounts)-success}/{len(accounts)}")
+              print(f"{'='*60}")
+              if success < len(accounts):
+                  raise SystemExit(1)
+
+          if __name__ == "__main__":
+              main()
+          PYEOF
+          python /tmp/renew.py
+
+      # =========================
+      # 账号2
+      # =========================
+      - name: 续期 账号2
+        env:
+          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_2 }}
+          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_2 }}
+          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_2 }}
+          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_2 }}
+          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_2 }}
+        run: |
+          python /tmp/renew.py
+
+      # =========================
+      # 账号3
+      # =========================
+      - name: 续期 账号3
+        env:
+          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_3 }}
+          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_3 }}
+          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_3 }}
+          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_3 }}
+          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_3 }}
+        run: |
+          python /tmp/renew.py
+
+      # =========================
+      # 账号4
+      # =========================
+      - name: 续期 账号4
+        env:
+          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_4 }}
+          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_4 }}
+          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_4 }}
+          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_4 }}
+          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_4 }}
+        run: |
+          python /tmp/renew.py
+
+      # =========================
+      # 账号5
+      # =========================
+      - name: 续期 账号5
+        env:
+          WOIDEN_ACCOUNT: ${{ secrets.WOIDEN_ACCOUNT_5 }}
+          WOIDEN_EMAIL: ${{ secrets.WOIDEN_EMAIL_5 }}
+          WOIDEN_PSWD: ${{ secrets.WOIDEN_PSWD_5 }}
+          WOIDEN_ACCOUNT_NUMBER: ${{ secrets.WOIDEN_ACCOUNT_NUMBER_5 }}
+          WOIDEN_PASSWORD: ${{ secrets.WOIDEN_PASSWORD_5 }}
+        run: |
+          python /tmp/renew.py
