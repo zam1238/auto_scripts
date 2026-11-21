@@ -1,7 +1,7 @@
 # =============================================================================
-# woiden.id 自动续期 —— ②号 (@kimisiwa)
+# woiden.id 自动续期 —— ② 号（@kimisiwa）
 # -----------------------------------------------------------------------------
-# 本文件 = woiden 第 ② 个组（Github handle @kimisiwa 那一套）
+# 本文件 = woiden 第 ② 个账号（GitHub handle @kimisiwa 那一套）
 #   secret     WOIDEN_BATCH_2
 #   时间文件   woiden/2/time.txt（state.enc 也在 woiden/2/）
 #   group      Woiden_Renew_2
@@ -9,6 +9,7 @@
 # 第 ① 个账号（@mimosiwa）在 woiden-renew.yml，两文件互不影响，别合并。
 # ★ woiden.id 和 hax.co.id 是两个独立站点，账号 / secret 都不通用。
 #   hax 在 hus-renew.yml，本文件只跑 woiden.id。
+#
 # 需要配置的 Secrets（仓库 Settings → Secrets and variables → Actions）：
 #   WOIDEN_BATCH_2      phone,tg_bot_token,tg_chat_id,tg_api_id,tg_api_hash,tg_session
 #                       （本文件读 _2，对应 @kimisiwa；① 号 woiden-renew.yml 读 WOIDEN_BATCH）
@@ -31,8 +32,8 @@ on:
     # 单轮实测 1–12 分钟，60 分钟只作兜底上限；被硬砍由下一班接手。
     # 幂等由 state 保证：当日已成功则后续触发直接跳过，不会重复续期。
     - cron: '30 23 * * *'  #第 1 次（北京 07:30）
-    - cron: '30 4 * * *'  #第 2 次（北京 12:30）
-    - cron: '0 8 * * *'  #第 3 次（北京 16:00）
+    - cron: '30 4 * * *'   #第 2 次（北京 12:30）
+    - cron: '0 8 * * *'    #第 3 次（北京 16:00）
   workflow_dispatch:
     inputs:
       force:
@@ -62,6 +63,7 @@ jobs:
       WOIDEN_TG_BOT: ${{ secrets.WOIDEN_TG_BOT }}
       PROXY_CONTENT: ${{ secrets.HY2_PROXY_URL }}
       SOCKS_PORT: ${{ secrets.SOCKS_PORT || '10808' }}
+
       # ── 路径 ────────────────────────────────────────────────────────
       PRIVATE_REPO: doraemon6789/auto_woiden_private
       PROJECT_DIR: woiden
@@ -74,20 +76,21 @@ jobs:
       # 路径执行 git add 会静默无操作（退出码 0 但什么都没暂存），接着 commit 报
       # "nothing to commit" 让 step 红得莫名其妙。
       TIME_DIR: woiden/2
+
       # ── 运行参数 ────────────────────────────────────────────────────
       DEBUG_FLAG: "1"
       # 外层：整个续期流程（登录→进页面→解验证码→提交）失败后整体重跑次数
       # （实际执行 = 该值 + 1）
       MAX_RENEW_RETRIES: "3"
-      # 中层：captcha 被指为「换 IP → 重新提交」的循环次数
+      # 中层：captcha 被拒后「换 IP → 重新提交」的循环次数
       MAX_WARP_RETRIES: "10"
-      # 内层：一次换 IP 内部 warp-cli 重连轮换次数（日志里的「轮换尝试 x/N」）
+      # 内层：一次换 IP 内部 warp-cli 重注册轮数（日志里的「轮换尝试 x/N」）
       MAX_WARP_ROTATE_ATTEMPTS: "20"
-      # 内层轮换总时间（秒）：超过就停止轮换，用当前 IP 继续
+      # 内层轮换总时间预算（秒）：超了就停止空转，用当前 IP 继续
       MAX_WARP_ROTATE_SECONDS: "600"
       # 连续拿到同一个出口 IP 多少次就认定 WARP 出口被固定，放弃轮换
       WARP_SAME_IP_GIVEUP: "10"
-      # 代理 ⇌ WARP 之间，自动切换几次才算上限
+      # 代理 ↔ WARP 直连 之间最多切换几次出口通道
       MAX_CHANNEL_SWITCHES: "30"
       # 登录重试次数
       MAX_LOGIN_RETRIES: "1"
@@ -99,8 +102,10 @@ jobs:
     steps:
       - name: 检出公开仓库
         uses: actions/checkout@v4
+
       - name: 创建输出目录
         run: mkdir -p ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/${{ env.SCREENSHOT_DIR }}
+
       - name: 检出私有仓库
         uses: actions/checkout@v4
         with:
@@ -109,75 +114,66 @@ jobs:
           ref: main
           path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
           fetch-depth: 1
-          # 不要把 PRIVATE_REPO_TOKEN 留在 .git/config 里——私有库拉出到公开库
-          # 工作区内带的子目录，token 一旦被留存就有被后续步骤/提交带出去的风险。
+          # 不要把 PRIVATE_REPO_TOKEN 留在 .git/config 里——私有库是检出到公开库
+          # 工作区内部的子目录，token 一旦落盘就有被后续步骤/误提交带出去的风险。
           persist-credentials: false
+
       - name: 确认脚本已就位
         run: |
           DIR="${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}"
           test -f "$DIR/${{ env.SCRIPT_NAME }}" \
             || { echo "[ERROR] 私有仓库里找不到 ${{ env.SCRIPT_NAME }}（检查 PRIVATE_REPO / 文件名）"; exit 1; }
           echo "[INFO] 脚本已就位：$DIR/${{ env.SCRIPT_NAME }}"
-          ls -la "$DIR" | head -20
+
       - name: 校验 WOIDEN_BATCH
         env:
           WOIDEN_BATCH: ${{ secrets.WOIDEN_BATCH_2 }}
         run: |
           python3 - <<'PY'
           import json, os
+
           value = os.environ.get("WOIDEN_BATCH", "").strip()
           if not value:
-              print("::error::WOIDEN_BATCH_2 为空，请在仓库 Secrets 里配置 WOIDEN_BATCH_2")
-              raise SystemExit(1)
+              raise SystemExit("WOIDEN_BATCH 未设置或为空")
+
           phones = []
-          fmt = "JSON"
           if value.startswith("["):
               # JSON 数组格式：多账号推荐写法，字段名见私有库 README
               try:
                   data = json.loads(value)
-              except Exception as e:
-                  print(f"::error::WOIDEN_BATCH_2 不是合法 JSON：{e}")
-                  raise SystemExit(1)
+              except json.JSONDecodeError as exc:
+                  raise SystemExit(f"WOIDEN_BATCH 以 [ 开头但 JSON 解析失败：{exc}")
               if not isinstance(data, list) or not data:
-                  print("::error::WOIDEN_BATCH_2 JSON 数组为空或不是数组")
-                  raise SystemExit(1)
-              accounts = data
-          elif value.startswith("{"):
-              # JSON 对象格式：单账号
-              try:
-                  data = json.loads(value)
-              except Exception as e:
-                  print(f"::error::WOIDEN_BATCH_2 不是合法 JSON：{e}")
-                  raise SystemExit(1)
-              accounts = [data]
+                  raise SystemExit("WOIDEN_BATCH 的 JSON 必须是非空数组")
+              for index, item in enumerate(data, 1):
+                  if not isinstance(item, dict):
+                      raise SystemExit(f"WOIDEN_BATCH 第 {index} 项不是对象")
+                  phone = str(item.get("phone") or "").strip()
+                  if not phone:
+                      raise SystemExit(f"WOIDEN_BATCH 第 {index} 项缺少 phone")
+                  missing = [k for k in ("tg_bot_token", "tg_chat_id", "tg_api_id", "tg_api_hash", "tg_session")
+                             if not str(item.get(k) or "").strip()]
+                  if missing:
+                      raise SystemExit(f"WOIDEN_BATCH 第 {index} 个账号缺少字段：{','.join(missing)}")
+                  phones.append(phone)
+              fmt = "JSON"
           else:
-              # 分号分隔格式：phone,bot_token,chat_id,api_id,api_hash,session;phone2,...
+              accounts = [x.strip() for x in value.replace("\\n", ";").split(";") if x.strip()]
+              if not accounts:
+                  raise SystemExit("WOIDEN_BATCH 没有有效账号")
+              for index, account in enumerate(accounts, 1):
+                  fields = [x.strip() for x in account.split(",")]
+                  if len(fields) < 6:
+                      raise SystemExit(f"WOIDEN_BATCH 第 {index} 个账号字段不足：需要 phone,bot_token,chat_id,api_id,api_hash,session")
+                  if any(not fields[i] for i in range(6)):
+                      raise SystemExit(f"WOIDEN_BATCH 第 {index} 个账号存在空字段")
+                  phones.append(fields[0])
               fmt = "分号"
-              accounts = []
-              for part in value.split(";"):
-                  part = part.strip()
-                  if not part:
-                      continue
-                  fields = [x.strip() for x in part.split(",")]
-                  if len(fields) != 6:
-                      print(f"::error::分号格式账号字段数不是 6：{part[:20]}***")
-                      raise SystemExit(1)
-                  accounts.append(dict(zip(["phone", "bot_token", "chat_id", "api_id", "api_hash", "session"], fields)))
-          if len(accounts) != 1:
-              print(f"::error::② 号固定只跑 1 个账号，当前 WOIDEN_BATCH_2 里有 {len(accounts)} 个账号，请只保留 1 个")
-              raise SystemExit(1)
-          for index, item in enumerate(accounts, start=1):
-              if not isinstance(item, dict):
-                  print(f"::error::WOIDEN_BATCH_2 第 {index} 个账号不是 JSON 对象")
-                  raise SystemExit(1)
-              fields = [str(item.get(k) or "").strip() for k in ("phone", "bot_token", "chat_id", "api_id", "api_hash", "session")]
-              if any(not fields[i] for i in range(6)):
-                  raise SystemExit(f"WOIDEN_BATCH 第 {index} 个账号字段不足：需要 phone,bot_token,chat_id,api_id,api_hash,session")
-              phones.append(fields[0])
-          if len(set(phones)) != len(phones):
-              print("::error::WOIDEN_BATCH_2 里有重复手机号")
-              raise SystemExit(1)
-          print(f"账号校验通过：{phones[0][:3]}***（共 1 个账号，格式：{fmt}）")
+
+          dupes = sorted({p for p in phones if phones.count(p) > 1})
+          if dupes:
+              raise SystemExit(f"WOIDEN_BATCH 存在重复账号（会导致同一账号被续两次）：{', '.join(dupes)}")
+          print(f"WOIDEN_BATCH 预检通过：{len(phones)} 个账号（{fmt}格式），凭据内容已隐藏")
           PY
 
       - name: 设置 Python
@@ -186,62 +182,60 @@ jobs:
           python-version: '3.13'
           cache: pip
           cache-dependency-path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/requirements.txt
+
       - name: 安装依赖
         working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
         run: |
-          set -e
-          python3 -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install -q requests playwright
-          fi
-          # 检查缺失工具，按需安装，避免每次都重复安装
+          # runner 镜像（Ubuntu 26.04）已自带 Chromium / Xvfb / curl / wget / jq / unzip。
+          # 以前无脑 apt install 这 8 个包，实际只缺 ffmpeg，却拖进 100+ 个依赖、
+          # 48MB、60 个文件，从 azure.archive.ubuntu.com 下只有 ~59KB/s，光装依赖就 834 秒。
+          # 现在：缺什么补什么；ffmpeg 改用 PyPI 的静态二进制（走 PyPI，实测 11 秒装完全部 pip 包）。
           missing=""
-          for tool in ffmpeg convert; do
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              missing="$missing $tool"
-            fi
+          command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1 \
+            || missing="$missing chromium"
+          for bin in Xvfb curl wget jq unzip; do
+            command -v "$bin" >/dev/null 2>&1 || missing="$missing $bin"
           done
           if [ -n "$missing" ]; then
-            echo "[INFO] 安装缺失工具:$missing"
-            sudo apt-get update -y
+            echo "[INFO] 镜像缺少:$missing，补装"
+            sudo apt-get update
             sudo apt-get install -y $missing
+          else
+            echo "[INFO] 浏览器和基础工具镜像已自带，跳过 apt"
           fi
-          # ffmpeg：若系统没有，尝试用 imageio-ffmpeg
-          if ! command -v ffmpeg >/dev/null 2>&1; then
-            pip install -q imageio imageio-ffmpeg
-          fi
-          # 浏览器：Playwright 需要 Chromium；若已安装则跳过
-          if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
-            echo "[INFO] 未检测到 Chromium，正在安装..."
-            sudo apt-get update -y
-            sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
-          fi
+
+          pip install --upgrade pip -q
+          pip install -r requirements.txt -q
+          # 预生成字体缓存：Chromium 第一次启动会在容器里现算字体缓存，实测要 20 秒以上，
+          # 正好撞上 DrissionPage 默认的 30 秒连接超时（偶发 BrowserConnectError 的根源）。
+          fc-cache -f >/dev/null 2>&1 || true
+          FFMPEG_BIN=$(python3 -c 'import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())')
+          sudo ln -sf "$FFMPEG_BIN" /usr/local/bin/ffmpeg
+          echo "[INFO] ffmpeg: $(ffmpeg -version | head -1)"
           for b in chromium chromium-browser google-chrome google-chrome-stable; do
             if command -v "$b" >/dev/null 2>&1; then
               echo "[INFO] 浏览器 $b: $("$b" --version 2>&1 | head -1) → $(command -v "$b")"
             fi
           done
-          # 语音识别 / 验证码识别依赖：若私有库 requirements 里已有则跳过
-          python3 -c "import speech_recognition" 2>/dev/null || pip install -q SpeechRecognition
-          python3 -c "import ddddocr" 2>/dev/null || pip install -q ddddocr
+          python3 -c 'import speech_recognition, pydub, audioop; print("语音依赖导入成功")'
+          python3 -c 'import ddddocr, onnxruntime; print("ddddocr/onnxruntime 导入成功")'
+
       - name: 启用 WARP
         uses: fscarmen/warp-on-actions@v1.3
         with:
           stack: ipv4
           mode: client
+
       - name: 安装代理
         working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
         run: |
-          set -e
           if [ -z "$PROXY_CONTENT" ]; then
             echo "[INFO] 未配置代理，直连模式"
             exit 0
           fi
+
           SB_VER="1.13.14"
           ARCHIVE="sing-box-${SB_VER}-linux-amd64.tar.gz"
-          echo "[INFO] 下载 sing-box ${SB_VER} ..."
           wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/${ARCHIVE}"
           tar -xzf "$ARCHIVE" -C /tmp/
           mv "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" ./sing-box
@@ -254,18 +248,17 @@ jobs:
           delay=$((RANDOM % 120))
           echo "随机延迟: ${delay}秒"
           sleep $delay
+
       - name: 执行续期
         id: renew
         working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
         run: |
-          # 单次执行（workflow 内不再循环重试），原因见下：
-          # 1) 2026-11-19 之前这里有过"每次都从头重建整个 chrome 配置目录"的逻辑，
-          #    2026-11-19 之后改成"只清理 chrome 配置目录中易过期的文件，并且每次都用
-          #    '干净浏览器'起 Chrome 并以无痕模式运行（无痕窗口不写持久化）"；
-          # 2) 脚本内部已经有外层/中层/内层三层重试（见 env 里的 MAX_*），
-          #    workflow 再重试会把已经成功的账号重复续期；
-          # 3) 每次续期都会写 time.txt / state.enc，若 workflow 重试，
-          #    第二次跑会读到「今日已成功」而直接跳过，看起来像成功，实际是假成功。
+          # 单次执行，刻意不做 workflow 内重试：
+          # · 2026-11-19 之前这里有过「最多 3 轮、每轮失败等 30 分钟」（RENEW_MAX_ATTEMPTS /
+          #   RENEW_RETRY_WAIT），已在 commit d06940e1 整体移除。不要再加回来：它会把单班拉到
+          #   90 分钟以上，与下一班 cron 抢 concurrency，收益也被 state.enc 幂等 + 多班触发覆盖。
+          # · 失败重试由「一天三班 cron」承担（见 on.schedule）；当日已成功的账号由 state.enc
+          #   幂等跳过（日志打印「全部 N 个账号均已成功续期 → 本次定时跳过」），不会重复续期。
           set +e
           python3 -u ${{ env.SCRIPT_NAME }} > woiden-renew.log 2>&1
           status=$?
@@ -278,6 +271,7 @@ jobs:
           fi
           echo "---- 退出码: ${status} ----"
           exit "$status"
+
       - name: 上传截图
         if: always()
         uses: actions/upload-artifact@v4
@@ -286,6 +280,7 @@ jobs:
           path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/${{ env.SCREENSHOT_DIR }}
           retention-days: 7
           if-no-files-found: warn
+
       - name: 上传日志
         if: always()
         uses: actions/upload-artifact@v4
@@ -298,45 +293,53 @@ jobs:
       - name: 清理本地截图
         if: always()
         run: |
-          # 用 ${VAR:?} 兜住：变量为空时 rm -rf "/*" 会变成删根目录。
           DIR="${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}"
+          # 用 ${VAR:?} 兜住：变量为空时 rm -rf "/*" 会变成删根目录。
           SCREENSHOT_PATH="${DIR:?}/${{ env.SCREENSHOT_DIR }}"
           if [ -d "$SCREENSHOT_PATH" ]; then
             rm -rf "${SCREENSHOT_PATH:?}"/*
             echo "本地截图已清理"
           fi
+
       - name: 提交执行时间
         if: always()
         run: |
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # 若本次是 cancelled（手动取消），不更新时间文件，避免把「取消」当成「成功」
-          RENEW_OUTCOME="${{ steps.renew.outcome }}"
-          # state.enc 是续期脚本写出的「已成功账号」状态，提交它可以让下一班
-          # 跳过已成功的账号；若本次失败，state.enc 可能不存在或不完整，仍提交
-          # 已有的那份（若存在）。
+
+          # 脚本直接写工作区的 TIME_DIR/state.enc；提交前的 git reset --hard 会把它
+          # 还原成远端旧版，所以先备份到 RUNNER_TEMP，每次 reset 后再恢复。
           STATE_KEEP="$RUNNER_TEMP/state.keep.enc"
           STATE_ABS="${{ github.workspace }}/${{ env.TIME_DIR }}/state.enc"
-          if [ -f "$STATE_ABS" ]; then
-            cp "$STATE_ABS" "$STATE_KEEP"
-          fi
+          # 续期步骤的结论：cancelled 时不回填本次的 state.enc
+          RENEW_OUTCOME="${{ steps.renew.outcome }}"
+          if [ -f "$STATE_ABS" ]; then cp "$STATE_ABS" "$STATE_KEEP"; fi
           TIME_PATH="${{ env.TIME_DIR }}/time.txt"
+
+          # time.txt 可能被并发的 schedule/手动 run 同时更新。
+          # 每次以最新 origin/main 为基准重建提交，避免 pull --rebase 产生内容冲突。
           for attempt in 1 2 3; do
             echo "提交执行时间，第 ${attempt}/3 次尝试"
             git fetch origin refs/heads/main:refs/remotes/origin/main
             git reset --hard origin/main
             mkdir -p "${{ env.TIME_DIR }}"
-            # reset 会把工作区清掉，先把 state.enc 拷回来
+            # reset --hard 会把已跟踪的 state.enc 还原成远端旧版，用备份恢复
+            # 「执行续期」被取消（手动取消 / runner 回收 / 平台侧中断）时，
+            # 那一次运行没有产生任何成功记录，把它的 state.enc 落盘只会污染当日计数、
+            # 让下一班误报「本日第 N 次执行」。此时保留 origin/main 里的旧 state。
             if [ "$RENEW_OUTCOME" != "cancelled" ] && [ -f "$STATE_KEEP" ]; then
               cp "$STATE_KEEP" "$STATE_ABS"
             fi
             date +'%Y-%m-%d %H:%M:%S' > "$TIME_PATH"
-            # time.txt 首次创建时还未被跟踪，ls-files 会报错，先提示
+            # 这里曾经是「没被跟踪就 exit 1，要求先手动提交一次」——fork 或换了
+            # 路径层级之后必然撞上，整条工作流变红却没真的坏。改成自动补：
+            # git add -f 同时覆盖「从未跟踪」和「被 .gitignore 挡掉」两种情形。
             if ! git ls-files --error-unmatch "$TIME_PATH" >/dev/null 2>&1; then
               echo "[INFO] $TIME_PATH 还没被跟踪，本次自动创建并纳入版本管理"
             fi
             git add -f "$TIME_PATH"
+            # 当日状态密文（脚本生成）；没有就不加，不影响提交
             STATE_PATH="${{ env.TIME_DIR }}/state.enc"
             if [ "$RENEW_OUTCOME" != "cancelled" ] && [ -f "$STATE_PATH" ]; then
               git add -f "$STATE_PATH"
@@ -354,8 +357,11 @@ jobs:
             git reset --hard origin/main
             sleep 2
           done
+          # 时间文件只是元数据，写完推不上去不该让整条工作流变红：
+          # 续期本身已经在前面跑完并发了 TG 通知，这里降级成告警即可。
           echo "::warning::3 次推送均失败，本次时间文件未更新（不影响续期结果）"
           exit 0
+
       - name: 🧹 清理旧的工作流运行记录
         if: always()
         env:
@@ -364,6 +370,9 @@ jobs:
           set +e
           current_run="${{ github.run_id }}"
           cutoff_epoch=$(date -d '24 hours ago' +%s)
+          # ★ 必须带 --workflow 限定在本 workflow：不加的话 gh run list 会列出
+          #   整个仓库所有 workflow 的运行记录，下面就会把别的 workflow（hus/sb/…）
+          #   的历史一起删掉。
           runs=$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow="woiden-renew-2.yml" \
@@ -371,9 +380,13 @@ jobs:
             --json databaseId,createdAt,status \
             --jq '.[] | [.databaseId, .createdAt, .status] | @tsv' 2>/dev/null)
           if [ -z "$runs" ]; then
-            echo "没有可清理的运行记录"
+            echo "没有找到可清理的运行记录"
             exit 0
           fi
+
+          # 先筛出该删的，再并发删除。
+          # 以前逐条 gh run delete（每次约 1 秒），几十条历史就是 70 多秒；
+          # 改成 xargs -P 10 之后只要几秒。
           to_delete=$(while IFS=$'\t' read -r run_id created_at status; do
             [ -z "$run_id" ] && continue
             [ "$run_id" = "$current_run" ] && continue
@@ -382,11 +395,13 @@ jobs:
             [ "$created_epoch" -ge "$cutoff_epoch" ] && continue
             echo "$run_id"
           done <<< "$runs")
+
           if [ -z "$to_delete" ]; then
-            echo "没有超过 24 小时的已完成运行记录需要清理"
+            echo "清理完成：没有超过 24 小时的已完成记录"
             exit 0
           fi
+
           count=$(echo "$to_delete" | wc -l | tr -d ' ')
-          echo "待删除 $count 条超过 24 小时的运行记录..."
+          echo "待删除 $count 条超过 24 小时的已完成记录（并发 10 路）"
           echo "$to_delete" | xargs -P 10 -I{} sh -c 'gh run delete "$1" --repo "$2" >/dev/null 2>&1 || true' _ {} "$GITHUB_REPOSITORY"
           echo "清理完成：保留最近 24 小时记录及所有未完成记录"
