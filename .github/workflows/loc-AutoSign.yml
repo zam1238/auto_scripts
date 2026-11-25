@@ -1,16 +1,21 @@
 name: 🔄  Loc Auto Sign
 
 on:
-  # 手动触发
+  # 手动触发：勾 account_login 可强制走账号登录（测打码链路，不读 cookie 文件）
   workflow_dispatch:
-  
-  # 定时触发
+    inputs:
+      account_login:
+        description: "强制用账号登录（跳过 cookie 文件）"
+        type: boolean
+        default: false
+  # 定时触发（UTC）
   schedule:
     - cron: "02 00 * * *"
 
-# 权限配置：允许提交和推送更改
+# 写权限：脚本要把 cookies/*.enc 推回私有库，步骤 9 要推 loc/time.txt 回本库
 permissions:
   contents: write
+
 concurrency:
   group: loc-sign
   cancel-in-progress: false
@@ -23,54 +28,51 @@ jobs:
       PROJECT_DIR: loc
       SCRIPT_NAME: loc-sign.py
       SCRIPT_DESC: loc 签到脚本
-    
-    steps:
-      # 步骤 1: 检出公开仓库
-      - name: 📥 检出公开仓库
-        uses: actions/checkout@v4
-      
-      # 步骤 1.5: 创建输出目录
-      - name: 📁 创建输出目录
-        run: |
-          mkdir -p ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/screenshots
+      PRIVATE_DIR: ${{ github.repository_owner }}-${{ github.event.repository.name }}-loc
 
-      # 步骤 2: 检出私有仓库
-      - name: 🔐 检出私有仓库
+    steps:
+      # 1. 两个仓库：本库（放 loc/time.txt）+ 私有库（放脚本和 cookies/*.enc）
+      - name: 📥 检出本仓库
+        uses: actions/checkout@v4
+
+      - name: 🔐 检出私有库
         uses: actions/checkout@v4
         with:
           repository: doraemon6789/auto_loc_sign
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           ref: main
-          path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
+          path: ${{ env.PRIVATE_DIR }}
           fetch-depth: 1
 
-      # 步骤 2: 设置 Python 环境
+      # 2. 运行环境
       - name: 🐍 设置 Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # 步骤 3: 安装系统依赖
       - name: 📦 安装系统依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb fonts-noto-cjk
+          sudo apt-get install -y xvfb fonts-noto-cjk xdotool python3-tk
+          mkdir -p ${{ env.PRIVATE_DIR }}/screenshots
 
-      # 步骤 4: 安装 Python 依赖
       - name: 📚 安装 Python 依赖
         run: |
           pip install --upgrade pip
+          # seleniumbase 钉 4.57.1：4.58.0 去掉了 UC 模式的 --disable-popup-blocking，
+          # uc_open_with_reconnect() 第二次调用时 window.open 被拦会直接崩。
+          # pyautogui + xdotool 只给「打码服务不可用时的真鼠标点击兜底」用。
+          pip install requests "seleniumbase==4.57.1" pyvirtualdisplay pyautogui PySocks PyNaCl
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install requests seleniumbase pyvirtualdisplay
+            echo "ℹ️ 无 requirements.txt，跳过"
           fi
 
-      # 步骤 5: 安装 Hysteria2（如果需要代理）
+      # 3. 可选代理（只在国内出口需要时才配 HY2_PROXY_URL）
       - name: 📡 安装 Hysteria2
         run: |
           if [ -n "${{ secrets.HY2_PROXY_URL }}" ]; then
-            echo "安装 Hysteria2..."
             curl -L -o hysteria \
               https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64
             chmod +x hysteria
@@ -81,42 +83,47 @@ jobs:
             echo "⚠️ 未配置代理，跳过 Hysteria2 安装"
           fi
 
-      # 步骤 6: 添加随机延迟
       - name: ⏳ 添加随机延迟
         run: |
           delay=$((RANDOM % 120))
           echo "随机延迟: ${delay}秒"
           sleep $delay
 
-      # 步骤 7: 执行脚本
+      # 4. 跑脚本：cookie 全部来自私有库的 cookies/*.enc，没有任何 cookie secret
       - name: 🚀 执行 ${{ env.SCRIPT_DESC }}
+        working-directory: ${{ env.PRIVATE_DIR }}
         env:
+          # 账号列表：每行 `标识,密码`（标识 = 用户名或邮箱）
           LOC_BATCH: ${{ secrets.LOC_BATCH }}
+
+          # 人机验证打码：NoneCap（key 和本仓库其它脚本共用，配这一个就够）
+          NONECAP_API_KEY: ${{ secrets.NONECAP_API_KEY }}
+          NONECAP_BASE_URL: https://api.nonecap.com/v1
+
+          # 手动触发勾选后强制走账号登录
+          LOC_FORCE_ACCOUNT: ${{ inputs.account_login }}
+
           HY2_PROXY_URL: ${{ secrets.HY2_PROXY_URL }}
           SOCKS_PORT: ${{ secrets.SOCKS_PORT || '51080' }}
-          SCREENSHOT_DIR: "screenshots"
+          SCREENSHOT_DIR: screenshots
         run: xvfb-run -a python ${{ env.SCRIPT_NAME }}
-        working-directory: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}
 
-      # 步骤 8: 上传截图
+      # 5. 收尾：留证据、清工作区、记时间
       - name: 📸 上传截图
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PROJECT_DIR }}-screenshots-${{ github.run_id }}
-          path: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/screenshots/
+          path: ${{ env.PRIVATE_DIR }}/screenshots/
+          if-no-files-found: ignore     # 走 cookie 路径时没有截图，正常
           retention-days: 7
 
-      # 步骤 8.5: 清理本地截图
       - name: 🗑️ 清理本地截图
         if: always()
         run: |
-          if [ -d "${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/screenshots" ]; then
-            rm -rf ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ env.PROJECT_DIR }}/screenshots/*
-            echo "✅ 本地截图已清理"
-          fi
+          rm -rf "${{ env.PRIVATE_DIR }}/screenshots/"* 2>/dev/null || true
+          echo "✅ 本地截图已清理"
 
-      # 步骤 9: 提交时间文件到公开库
       - name: ⏱️ 提交执行时间
         if: always()
         run: |
@@ -127,8 +134,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "无变化，无需提交"
           else
-            TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')
-            git commit -m "⏱️ 更新 loc 执行时间: $TIMESTAMP"
+            git commit -m "⏱️ 更新 loc 执行时间: $(date +'%Y-%m-%d %H:%M:%S')"
             for _try in 1 2 3; do
               git fetch origin main
               if git push origin HEAD:main; then
@@ -136,10 +142,8 @@ jobs:
                 exit 0
               fi
               echo "第 $_try 次推送被拒/失败，重试"
-              git fetch origin main
               git reset --soft FETCH_HEAD
               sleep 3
             done
             echo "::warning::time.txt 3 次推送均失败，本次未更新（不影响本次执行结果）"
           fi
-
